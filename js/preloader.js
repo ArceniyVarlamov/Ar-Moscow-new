@@ -11,20 +11,27 @@ const ASSET_SOURCES = {
   grassFloorModel: './assets/models/grass_floor.glb',
   treeModel: './assets/models/tree.glb',
   sunModel: './assets/models/sun.glb',
+  // audio assets
+  birdsAudio: './assets/music/birds.mp3',
+  genaAudio: './assets/music/gena.mp3',
+  lariskaAudio: './assets/music/lariska.mp3',
+  wolf2Audio: './assets/music/wolf_2.mp3',
+  wolf3Audio: './assets/music/wolf_3.mp3',
 };
 
 const GROUP_MAP = {
   core: ['lariskaModel', 'souzmultiparkModel', 'rabbitModel'],
-  step_intro: ['souzmultiparkModel', 'rabbitModel'],
+  step_intro: ['souzmultiparkModel', 'rabbitModel', 'wolf2Audio', 'wolf3Audio'],
   step_wolf: ['souzmultiparkModel', 'rabbitModel'],
-  step_gena: ['noteModel'],
+  step_gena: ['noteModel', 'genaAudio'],
   step_cheburashka: ['orangeModel'],
-  step_shapoklyak: ['cheeseModel'],
+  step_shapoklyak: ['cheeseModel', 'lariskaAudio'],
   step_cheburashkastand: ['ticketModel', 'cuteStarModel'],
-  step_trio: ['grassModel', 'grassFloorModel', 'treeModel', 'sunModel'],
+  step_trio: ['grassModel', 'grassFloorModel', 'treeModel', 'sunModel', 'birdsAudio'],
+  step_wolf: ['souzmultiparkModel', 'rabbitModel', 'wolf2Audio', 'wolf3Audio'],
   hero_cheburashka: ['orangeModel'],
-  hero_gena: ['noteModel'],
-  hero_shepoklak: ['cheeseModel'],
+  hero_gena: ['noteModel', 'genaAudio'],
+  hero_shepoklak: ['cheeseModel', 'lariskaAudio'],
   hero_trio: ['grassModel', 'grassFloorModel', 'treeModel', 'sunModel'],
 };
 
@@ -95,14 +102,8 @@ export function createAssetPreloader({ assetsEl = document.querySelector('a-asse
       return;
     }
 
-    const onLoad = () => {
-      cleanup();
-      finalize('loaded');
-    };
-    const onError = (ev) => {
-      cleanup();
-      finalize('error', ev?.detail || ev);
-    };
+    const onLoad = () => { cleanup(); finalize('loaded'); };
+    const onError = (ev) => { cleanup(); finalize('error', ev?.detail || ev); };
     const cleanup = () => {
       try { entry.el?.removeEventListener('loaded', onLoad); } catch(_) {}
       try { entry.el?.removeEventListener('error', onError); } catch(_) {}
@@ -111,13 +112,29 @@ export function createAssetPreloader({ assetsEl = document.querySelector('a-asse
     // Create element if needed, set listeners, set src, then append to DOM
     try {
       if (!entry.el) {
-        entry.el = document.createElement('a-asset-item');
+        const isAudio = typeof entry.src === 'string' && /\.mp3(\?.*)?$/i.test(entry.src);
+        entry.el = document.createElement(isAudio ? 'audio' : 'a-asset-item');
         entry.el.id = entry.id;
+        if (isAudio) {
+          try { entry.el.setAttribute('preload', 'auto'); } catch(_) {}
+          try { entry.el.setAttribute('crossorigin', 'anonymous'); } catch(_) {}
+        }
       }
-      entry.el.addEventListener('loaded', onLoad, { once: true });
-      entry.el.addEventListener('error', onError, { once: true });
-      entry.el.setAttribute('src', entry.src);
-      if (!entry.el.isConnected) assetsEl.appendChild(entry.el);
+      const isAudio = entry.el.tagName.toLowerCase() === 'audio';
+      if (isAudio) {
+        entry.el.addEventListener('canplaythrough', onLoad, { once: true });
+        entry.el.addEventListener('loadeddata', onLoad, { once: true });
+        entry.el.addEventListener('error', onError, { once: true });
+        entry.el.setAttribute('src', entry.src);
+        if (!entry.el.isConnected) assetsEl.appendChild(entry.el);
+        // kick off load
+        try { entry.el.load?.(); } catch(_) {}
+      } else {
+        entry.el.addEventListener('loaded', onLoad, { once: true });
+        entry.el.addEventListener('error', onError, { once: true });
+        entry.el.setAttribute('src', entry.src);
+        if (!entry.el.isConnected) assetsEl.appendChild(entry.el);
+      }
     } catch (error) {
       cleanup();
       finalize('error', error);

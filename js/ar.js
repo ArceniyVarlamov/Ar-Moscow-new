@@ -73,14 +73,22 @@ export function createARController({
   const ensureGenaAudio = () => {
     if (genaAudio) return genaAudio;
     try {
-      const a = new Audio('./assets/music/gena.mp3');
-      a.loop = true;
-      a.preload = 'auto';
-      a.crossOrigin = 'anonymous';
-      // Reduce initial volume a bit to avoid being too loud
-      a.volume = 0.85;
-      a.load?.();
-      genaAudio = a;
+      const el = document.getElementById('genaAudio');
+      if (el) {
+        el.loop = true;
+        el.crossOrigin = 'anonymous';
+        el.volume = 0.85;
+        el.load?.();
+        genaAudio = el;
+      } else {
+        const a = new Audio('./assets/music/gena.mp3');
+        a.loop = true;
+        a.preload = 'auto';
+        a.crossOrigin = 'anonymous';
+        a.volume = 0.85;
+        a.load?.();
+        genaAudio = a;
+      }
     } catch (_) {}
     return genaAudio;
   };
@@ -100,11 +108,19 @@ export function createARController({
   const ensureShapAudio = () => {
     if (shapAudio) return shapAudio;
     try {
-      const a = new Audio('./assets/music/lariska.mp3');
-      a.preload = 'auto';
-      a.crossOrigin = 'anonymous';
-      a.volume = 1.0;
-      shapAudio = a;
+      const el = document.getElementById('lariskaAudio');
+      if (el) {
+        el.crossOrigin = 'anonymous';
+        el.volume = 1.0;
+        el.load?.();
+        shapAudio = el;
+      } else {
+        const a = new Audio('./assets/music/lariska.mp3');
+        a.preload = 'auto';
+        a.crossOrigin = 'anonymous';
+        a.volume = 1.0;
+        shapAudio = a;
+      }
     } catch (_) {}
     return shapAudio;
   };
@@ -128,12 +144,12 @@ export function createARController({
   const ensureWolfAudios = () => {
     try {
       if (!wolf2Audio) {
-        wolf2Audio = new Audio('./assets/music/wolf_2.mp3');
+        wolf2Audio = document.getElementById('wolf2Audio') || new Audio('./assets/music/wolf_2.mp3');
         wolf2Audio.preload = 'auto';
         wolf2Audio.crossOrigin = 'anonymous';
       }
       if (!wolf3Audio) {
-        wolf3Audio = new Audio('./assets/music/wolf_3.mp3');
+        wolf3Audio = document.getElementById('wolf3Audio') || new Audio('./assets/music/wolf_3.mp3');
         wolf3Audio.preload = 'auto';
         wolf3Audio.crossOrigin = 'anonymous';
       }
@@ -1584,7 +1600,8 @@ export function createARController({
     try {
       const birds = document.createElement('a-entity');
       birds.id = 'trio-birds-sfx';
-      birds.setAttribute('sound', 'src: url(./assets/music/birds.mp3); autoplay: false; loop: true; positional: false; volume: 0.65');
+      // Use preloaded audio asset if present
+      birds.setAttribute('sound', 'src: #birdsAudio; autoplay: false; loop: true; positional: false; volume: 0.65');
       root.appendChild(birds);
     } catch(_) {}
   };
