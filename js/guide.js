@@ -110,6 +110,14 @@ export function createGuideController({ guideEl, subtitlesEl, disabled = false }
     if (!key) return null;
     if (audioCache[key]) return audioCache[key];
     try {
+      const pre = document.getElementById(`mouse_${key}Audio`);
+      if (pre) {
+        pre.preload = 'auto';
+        pre.crossOrigin = 'anonymous';
+        pre.volume = 1.0;
+        audioCache[key] = pre;
+        return pre;
+      }
       const a = new Audio(`${AUDIO_BASE}mouse_${key}.mp3`);
       a.preload = 'auto';
       a.crossOrigin = 'anonymous';

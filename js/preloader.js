@@ -17,22 +17,34 @@ const ASSET_SOURCES = {
   lariskaAudio: './assets/music/lariska.mp3',
   wolf2Audio: './assets/music/wolf_2.mp3',
   wolf3Audio: './assets/music/wolf_3.mp3',
+  // mouse guide voiceovers
+  mouse_helphimAudio: './assets/music/mouse_helphim.mp3',
+  mouse_goodphotoAudio: './assets/music/mouse_goodphoto.mp3',
+  mouse_gogenaAudio: './assets/music/mouse_gogena.mp3',
+  mouse_gocheburAudio: './assets/music/mouse_gochebur.mp3',
+  mouse_goshepokAudio: './assets/music/mouse_goshepok.mp3',
+  mouse_gowolfAudio: './assets/music/mouse_gowolf.mp3',
+  mouse_eatcheeseAudio: './assets/music/mouse_eatcheese.mp3',
+  mouse_parkAudio: './assets/music/mouse_park.mp3',
 };
 
 const GROUP_MAP = {
   core: ['lariskaModel', 'souzmultiparkModel', 'rabbitModel'],
-  step_intro: ['souzmultiparkModel', 'rabbitModel', 'wolf2Audio', 'wolf3Audio'],
-  step_wolf: ['souzmultiparkModel', 'rabbitModel'],
-  step_gena: ['noteModel', 'genaAudio'],
-  step_cheburashka: ['orangeModel'],
-  step_shapoklyak: ['cheeseModel', 'lariskaAudio'],
-  step_cheburashkastand: ['ticketModel', 'cuteStarModel'],
-  step_trio: ['grassModel', 'grassFloorModel', 'treeModel', 'sunModel', 'birdsAudio'],
+  step_intro: ['souzmultiparkModel', 'rabbitModel', 'wolf2Audio', 'wolf3Audio', 'mouse_goodphotoAudio', 'mouse_gogenaAudio', 'mouse_gowolfAudio'],
   step_wolf: ['souzmultiparkModel', 'rabbitModel', 'wolf2Audio', 'wolf3Audio'],
+  step_gena: ['noteModel', 'genaAudio', 'mouse_gocheburAudio'],
+  step_cheburashka: ['orangeModel', 'mouse_goshepokAudio'],
+  step_shapoklyak: ['cheeseModel', 'lariskaAudio', 'mouse_eatcheeseAudio'],
+  step_cheburashkastand: ['ticketModel', 'cuteStarModel', 'mouse_parkAudio'],
+  step_trio: ['grassModel', 'grassFloorModel', 'treeModel', 'sunModel', 'birdsAudio'],
   hero_cheburashka: ['orangeModel'],
   hero_gena: ['noteModel', 'genaAudio'],
   hero_shepoklak: ['cheeseModel', 'lariskaAudio'],
   hero_trio: ['grassModel', 'grassFloorModel', 'treeModel', 'sunModel'],
+  voice_mouse: [
+    'mouse_helphimAudio','mouse_goodphotoAudio','mouse_gogenaAudio','mouse_gocheburAudio',
+    'mouse_goshepokAudio','mouse_gowolfAudio','mouse_eatcheeseAudio','mouse_parkAudio'
+  ],
 };
 
 function uniqueIds(list) {

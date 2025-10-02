@@ -91,6 +91,7 @@ Promise.all([coreReady, questWarmup]).then(() => {
     'step_shapoklyak',
     'step_cheburashkastand',
     'step_trio',
+    'voice_mouse',
   ]);
 }).catch((error) => {
   console.warn('[Preloader] core warmup failed', error);
@@ -159,6 +160,7 @@ async function handleStartQuest() {
     guide.clearCTA();
     return;
   }
+  try { await unlockAudioPlayback(); } catch(_) {}
   ui.setInteractionHint('Иди по подсказкам и наводи камеру на таблички у статуй.');
   ui.hideLanding();
   ui.hideHeroes();
@@ -194,6 +196,30 @@ function handleBackToLanding() {
   
 }
 
+// Attempt to unlock audio playback on first user gesture (iOS/Chrome autoplay policies)
+async function unlockAudioPlayback() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+      try {
+        if (!window.__UNLOCK_AC) window.__UNLOCK_AC = new AC();
+        if (window.__UNLOCK_AC?.state === 'suspended') await window.__UNLOCK_AC.resume();
+      } catch(_) {}
+    }
+  } catch(_) {}
+  try {
+    const audios = Array.from(document.querySelectorAll('a-assets audio'));
+    for (const a of audios) {
+      const prevMuted = a.muted;
+      const prevVol = a.volume;
+      a.muted = true; a.volume = 0.0;
+      try { await a.play(); } catch(_) {}
+      try { a.pause(); a.currentTime = 0; } catch(_) {}
+      a.muted = prevMuted; a.volume = prevVol;
+    }
+  } catch(_) {}
+}
+
 async function handleHeroSelect({ key, title }) {
   // Use canonical mapping for new targets
   const mind = mindForHeroKey(key);
@@ -214,6 +240,7 @@ async function handleHeroSelect({ key, title }) {
     guide.clearCTA();
     return;
   }
+  try { await unlockAudioPlayback(); } catch(_) {}
   ui.hideHeroes();
   ui.hideLanding();
   ui.setInteractionHint(`Наведись на: ${title}`);
