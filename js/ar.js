@@ -137,9 +137,10 @@ export function createARController({
   };
   const stopShapAudio = () => { try { shapAudio && (shapAudio.pause(), shapAudio.currentTime = 0); } catch (_) {} };
 
-  // Wolf big-jump audios (wolf_2 -> wolf_3)
+  // Wolf audios: big-jump chain (wolf_2 -> wolf_3) and intro "ah" scream
   let wolf2Audio = null;
   let wolf3Audio = null;
+  let wolfAhAudio = null;
   let wolfBigJumpActive = false;
   const ensureWolfAudios = () => {
     try {
@@ -153,7 +154,20 @@ export function createARController({
         wolf3Audio.preload = 'auto';
         wolf3Audio.crossOrigin = 'anonymous';
       }
+      if (!wolfAhAudio) {
+        wolfAhAudio = document.getElementById('wolfAhAudio') || new Audio('./assets/music/wolf_ah.mp3');
+        try { wolfAhAudio.preload = 'auto'; } catch(_) {}
+        try { wolfAhAudio.crossOrigin = 'anonymous'; } catch(_) {}
+      }
     } catch (_) {}
+  };
+  const playWolfAhAudio = async () => {
+    try {
+      ensureWolfAudios();
+      if (!wolfAhAudio) return;
+      try { wolfAhAudio.pause(); wolfAhAudio.currentTime = 0; } catch(_) {}
+      await wolfAhAudio.play();
+    } catch(_) {}
   };
   const playWolfBigJumpAudio = async () => {
     ensureWolfAudios();
@@ -292,9 +306,9 @@ export function createARController({
         logo.setAttribute('animation__bigUp', `property: position; dur: ${bigUpDur}; easing: easeOutCubic; startEvents: big-up`);
         logo.setAttribute('animation__bigDown', `property: position; dur: ${bigDownDur}; easing: easeInCubic; startEvents: big-down`);
 
-        // One-time intro: fall from sky onto wolf head (higher landing), then settle to ground, then shift holder from center to hare
+    // One-time intro: fall from sky onto wolf head (adjusted to be a bit lower), then settle to ground, then shift holder from center to hare
         const introStart = baseY + 3 * (spec.introDrop || 1.5);
-        const introLandingY = (typeof spec.introLandingY === 'number') ? spec.introLandingY : (baseY + ((spec.headOffsetY || 0.22) * 4));
+        const introLandingY = (typeof spec.introLandingY === 'number') ? spec.introLandingY : (baseY + ((spec.headOffsetY || 0.22) * 3.4));
         logo.setAttribute('animation__introDrop', `property: position; from: 0 ${introStart} 0; to: 0 ${introLandingY} 0; dur: ${spec.introDropDur || 1600}; easing: easeInCubic; startEvents: chase-intro-drop`);
         // slight bounce on head before moving on
         const headBounceH = Math.max(0.015, hop * 0.8);
@@ -376,6 +390,8 @@ export function createARController({
     const onIntroHeadDone = () => { try { logo.emit('chase-intro-ground'); } catch(_) {} };
     const onIntroGroundDone = () => { try { holder.emit('chase-intro-shift'); } catch(_) {} };
     const onIntroShiftDone = () => { smallCount = 0; setTimeout(startSmall, 120); };
+    try { logo.addEventListener('animationstart__introDrop', ()=>{ try { playWolfAhAudio(); } catch(_) {} }, { once: true }); } catch(_) {}
+    try { logo.addEventListener('animationstart__introDrop', ()=>{ try { playWolfAhAudio(); } catch(_) {} }, { once: true }); } catch(_) {}
     bindAnimEnd(logo, 'introDrop', onIntroDropDone);
     bindAnimEnd(logo, 'introHead', onIntroHeadDone);
     bindAnimEnd(logo, 'introGround', onIntroGroundDone);
@@ -1689,8 +1705,8 @@ export function createARController({
       case 'wolf':
         // Один логотип: прыжки у зайца (справа) и перелёт влево, заяц статичен справа
         // Чуть выше прыжок; справа 3 прыжка, слева 2 (см. installAnimations)
-        // Уменьшили логотип и зайца в 1.5 раза относительно прошлых значений; заяц дальше за логотипом
-        return { logoChase: true, rotation: '0 -90 0', rightX: 0.60, leftX: -0.60, baseZ: -0.14, baseY: -0.08, hop: 0.12, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, arcY: 0.70, fitLogo: 1.92, hareModel: '#rabbitModel', hareX: 0.60, hareZ: -0.30, hareY: -0.08, hareFit: 1.17, hareRot: '0 -90 0' };
+        // Уменьшаем логотип и зайца ещё на 1.2x; приземление чуть ниже
+        return { logoChase: true, rotation: '0 -90 0', rightX: 0.60, leftX: -0.60, baseZ: -0.14, baseY: -0.08, hop: 0.12, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, arcY: 0.70, fitLogo: 1.60, hareModel: '#rabbitModel', hareX: 0.60, hareZ: -0.30, hareY: -0.08, hareFit: 0.975, hareRot: '0 -90 0', headOffsetY: 0.18 };
       case 'shepoklak':
         return { model: '#lariskaModel', scale: '0.4 0.4 0.4', position: '0 -0.05 0', rotation: '0 20 0', mixer: true };
       case 'lariska':
@@ -1698,8 +1714,8 @@ export function createARController({
       case 'souzmultipark':
         return { model: '#souzmultiparkModel', fitSize: 0.8 };
       default:
-        // По умолчанию — уменьшили логотип и зайца в 1.5 раза; заяц дальше за логотипом
-        return { logoChase: true, rotation: '0 -90 0', rightX: 0.60, leftX: -0.60, baseZ: -0.14, baseY: -0.08, hop: 0.12, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, arcY: 0.70, fitLogo: 1.92, hareModel: '#rabbitModel', hareX: 0.60, hareZ: -0.30, hareY: -0.08, hareFit: 1.17, hareRot: '0 -90 0' };
+        // По умолчанию — параметры как у волка
+        return { logoChase: true, rotation: '0 -90 0', rightX: 0.60, leftX: -0.60, baseZ: -0.14, baseY: -0.08, hop: 0.12, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, arcY: 0.70, fitLogo: 1.60, hareModel: '#rabbitModel', hareX: 0.60, hareZ: -0.30, hareY: -0.08, hareFit: 0.975, hareRot: '0 -90 0', headOffsetY: 0.18 };
     }
   };
 
@@ -1719,8 +1735,8 @@ export function createARController({
       case 'wolf':
       case 'intro':
       default:
-        // В квесте — уменьшили размеры в 1.5 раза; заяц ещё дальше
-        return { logoChase: true, rotation: '0 -90 0', rightX: 0.52, leftX: -0.52, baseZ: -0.12, hop: 0.09, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, holdRight: 2600, holdLeft: 2600, arcY: 0.6, fitLogo: 0.80, hareModel: '#rabbitModel', hareX: 0.52, hareZ: -0.28, hareFit: 0.45, hareRot: '0 -90 0' };
+        // В квесте — уменьшили логотип и зайца на 1.2x дополнительно, логотип приземляется чуть ниже
+        return { logoChase: true, rotation: '0 -90 0', rightX: 0.52, leftX: -0.52, baseZ: -0.12, hop: 0.09, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, holdRight: 2600, holdLeft: 2600, arcY: 0.6, fitLogo: 0.6667, hareModel: '#rabbitModel', hareX: 0.52, hareZ: -0.28, hareFit: 0.375, hareRot: '0 -90 0', headOffsetY: 0.18 };
     }
   };
 
