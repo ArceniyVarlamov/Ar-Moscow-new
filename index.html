@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Союзмультпарк AR</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./vendor/aframe-1.4.2.min.js"></script>
+    <script src="./vendor/mindar-image-aframe.prod.js"></script>
+    <script src="./js/effects.js"></script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div id="landing-screen" class="panel">
+      <div class="panel__content">
+        <img src="./assets/ui/images-2.png" alt="Союзмультпарк" class="panel__logo" />
+        <h1>Что делаем?</h1>
+        <div class="entry-cards">
+          <button id="start-quest" class="card">
+            <div class="card__title">Пройти квест с мышкой</div>
+            <div class="card__desc">Пошаговые подсказки, эффекты у статуй и фото на каждом этапе.</div>
+          </button>
+          <button id="start-heroes" class="card">
+            <div class="card__title">Сфоткаться с героями</div>
+            <div class="card__desc">Выберите героя, наведите камеру и сделайте снимок.</div>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="heroes-panel" class="panel hidden">
+      <div class="panel__content">
+        <h2>Выберите героя</h2>
+        <div class="heroes-grid">
+          <button class="hero" data-key="cheburashka">Чебурашка</button>
+          <button class="hero" data-key="gena">Крокодил Гена</button>
+          <button class="hero" data-key="wolf">Волк</button>
+          <button class="hero" data-key="shepoklak">Шапокляк</button>
+          <button class="hero" data-key="souzmultipark">Куча чебурашек</button>
+          <button class="hero" data-key="trio">Трио</button>
+        </div>
+        <button id="back-to-landing" class="cta cta--ghost" style="margin-top:12px">Назад</button>
+      </div>
+    </div>
+
+  <div id="ar-wrapper" class="hidden">
+      <div id="ar-overlay">
+        <div class="status" id="tracking-status">Ищем скульптуру…</div>
+        <div class="hint" id="interaction-hint">Совместите рамку с изображением персонажа.</div>
+        <div class="capture-controls">
+          <button id="skip-next" class="cta cta--ghost" style="margin-right: 10px">Следующий герой →</button>
+          <button id="camera-toggle" class="cta cta--ghost" style="margin-right: 10px">Камера: задняя</button>
+          <button id="capture" class="cta cta--ghost" disabled>Сделать кадр</button>
+  </div>
+
+  <!-- Zappar Face Tracking wrapper (lazy-built on Shapoklyak step to avoid early camera prompts) -->
+  
+      </div>
+      <a-scene
+        id="ar-scene"
+        mindar-image="imageTargetSrc: ./assets/targets/trio.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no; maxTrack: 3; filterMinCF: 0.00005; filterBeta: 0.001; missTolerance: 10; warmupTolerance: 5;"
+        color-space="sRGB"
+        renderer="colorManagement: true; physicallyCorrectLights: true; alpha: true; preserveDrawingBuffer: true; antialias: true"
+        vr-mode-ui="enabled: false"
+        device-orientation-permission-ui="enabled: false"
+        embedded
+      >
+        <a-assets timeout="60000"></a-assets>
+
+        <a-camera position="0 0 0" look-controls="enabled: false">
+          <!-- 3D guide (Mouse/Lariska) attached to camera -->
+          <a-entity id="guide-lariska" visible="false"
+            position="0 -0.05 -1.8" scale="0.6 0.6 0.6" rotation="-28 0 0" animation-mixer
+            animation__sway="property: rotation; from: 28 54 0; to: 28 37; dur: 2200; dir: alternate; loop: true; easing: easeInOutSine"></a-entity>
+          <!-- Lights to ensure guide visibility (brighter, no opacity involved) -->
+          <a-entity light="type: ambient; intensity: 4.2"></a-entity>
+          <a-entity light="type: hemisphere; intensity: 6.6; color: #ffffff; groundColor: #c3c7cf"></a-entity>
+          <a-entity light="type: directional; intensity: 5.6" position="0.8 1 0.6"></a-entity>
+          <a-entity light="type: directional; intensity: 5.0" position="-0.6 0.6 0.8"></a-entity>
+        </a-camera>
+
+        
+
+        <!-- Generic anchor for single-hero mode (index 0 in chosen .mind) -->
+        <a-entity id="anchor-generic" mindar-image-target="targetIndex: 0" visible="false">
+          <a-entity id="scene-generic"></a-entity>
+        </a-entity>
+      </a-scene>
+    </div>
+
+    <!-- Subtitles/Guide overlay -->
+    <div id="subtitles" class="subtitles hidden"></div>
+
+    <div id="unsupported" class="panel hidden">
+      <div class="panel__content">
+        <h2>Нужен доступ к камере</h2>
+        <p>
+          Чтобы оживить персонажей, разрешите использование камеры в браузере и обновите страницу.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

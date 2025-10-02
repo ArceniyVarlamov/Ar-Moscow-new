@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "version": 1,
+    "updated": "2025-09-22T00:00:00Z",
+    "ticketUrl": ""
+  },
+  "cheb": {
+    "effects": {
+      "orange-rain": {
+        "enabled": true,
+        "rate": 6.0,
+        "area": 0.6,
+        "height": 2.0,
+        "groundY": -1.12,
+        "scale": 0.002,
+        "max": 40,
+        "gravity": 2.0,
+        "life": 8,
+        "colliderRadius": 0.34,
+        "colliderType": "sphere",
+        "visualizeCollider": false,
+        "topRoundness": 0,
+        "topOutward": 0,
+        "topBounce": 0,
+        "topFriction": 1
+      }
+    }
+  },
+  "shap": {
+    "models": [
+      {
+        "gltf": "#lariskaModel",
+        "position": "0 -0.05 0",
+        "scale": "0.4 0.4 0.4",
+        "rotation": "0 20 0",
+        "animation": {
+          "property": "rotation",
+          "from": "0 20 0",
+          "to": "0 -20 0",
+          "dur": 3000,
+          "dir": "alternate",
+          "loop": true,
+          "easing": "easeInOutSine"
+        }
+      }
+    ]
+  },
+  "wolf": {
+    "models": []
+  }
+}
