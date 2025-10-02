@@ -23,6 +23,8 @@ export function initUI({
   const captureButton = document.getElementById('capture');
   const cameraToggle = document.getElementById('camera-toggle');
   const skipNextBtn = document.getElementById('skip-next');
+  const preloadBox = document.getElementById('preload-status');
+  const preloadText = document.getElementById('preload-text');
 
   startQuestBtn?.addEventListener('click', () => { onStartQuest(); });
   startHeroesBtn?.addEventListener('click', () => { onStartHeroes(); });
@@ -143,5 +145,12 @@ export function initUI({
     getTrackingStatusEl: () => trackingStatus,
     getInteractionHintEl: () => interactionHint,
     setSkipVisible: (visible) => { if (skipNextBtn) skipNextBtn.style.display = visible ? '' : 'none'; },
+    setStartQuestEnabled: (enabled) => { if (startQuestBtn) startQuestBtn.disabled = !enabled; },
+    setStartHeroesEnabled: (enabled) => { if (startHeroesBtn) startHeroesBtn.disabled = !enabled; },
+    showLandingLoader: (text, visible=true) => {
+      if (!preloadBox) return;
+      if (typeof text === 'string' && preloadText) preloadText.textContent = text;
+      preloadBox.classList.toggle('hidden', !visible);
+    },
   };
 }

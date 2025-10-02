@@ -98,6 +98,24 @@ body.ar-active {
   color: #6c707c;
 }
 
+/* Landing loader */
+.landing-loader {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.landing-loader__text { color: #4c5160; font-size: 0.95rem; }
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid rgba(0,0,0,0.12);
+  border-top-color: #f08c00;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .cta {
   display: inline-flex;
   justify-content: center;

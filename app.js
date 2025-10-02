@@ -61,9 +61,26 @@ const guide = createGuideController({ guideEl, subtitlesEl, disabled: noGuide })
 const quest = createQuestController();
 
 const assetsEl = document.querySelector('a-assets');
-const assetPreloader = createAssetPreloader({ assetsEl });
+const assetPreloader = createAssetPreloader({
+  assetsEl,
+  onStateChange: (state) => {
+    try {
+      // Progress for quest warmup (core + step_intro)
+      const ids = assetPreloader.groupAssetIds(['core','step_intro']);
+      const status = state.statusById || {};
+      const total = ids.length || 1;
+      const loaded = ids.filter((id)=> status[id] === 'loaded').length;
+      if (loaded < total) ui.showLandingLoader(`Подготавливаем квест… ${loaded}/${total}` , true);
+      else ui.showLandingLoader('Готово! Можно начинать квест.', true);
+    } catch(_) {}
+  }
+});
+// Warm critical bundles for quest start
 const coreReady = assetPreloader.ensureCore();
-coreReady.then(() => {
+const questWarmup = assetPreloader.ensureForStep('intro');
+Promise.all([coreReady, questWarmup]).then(() => {
+  ui.setStartQuestEnabled(true);
+  ui.showLandingLoader('Готово! Можно начинать квест.', true);
   try {
     // Bind guide model only after core assets exist to avoid early glTF errors
     guideEl?.setAttribute('gltf-smart', '#lariskaModel');
@@ -77,6 +94,8 @@ coreReady.then(() => {
   ]);
 }).catch((error) => {
   console.warn('[Preloader] core warmup failed', error);
+  ui.setStartQuestEnabled(false);
+  ui.showLandingLoader('Не удалось подготовить квест. Обновите страницу.', true);
 });
 
 const ui = initUI({
@@ -88,6 +107,12 @@ const ui = initUI({
   onCapture: handleCapture,
   onSkipNext: handleSkipNext,
 });
+
+// Disable quest start until warmup completes; show loader
+try {
+  ui.setStartQuestEnabled(false);
+  ui.showLandingLoader('Подготавливаем квест…', true);
+} catch(_) {}
 
 const arController = createARController({
   sceneEl,

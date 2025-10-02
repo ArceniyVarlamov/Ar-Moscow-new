@@ -208,6 +208,11 @@ export function createAssetPreloader({ assetsEl = document.querySelector('a-asse
     };
   };
 
+  const groupAssetIds = (groups=[]) => {
+    const list = uniqueIds((Array.isArray(groups)?groups:[groups]).flatMap((g)=> GROUP_MAP[g] || []));
+    return list;
+  };
+
   notify();
 
   return {
@@ -218,5 +223,6 @@ export function createAssetPreloader({ assetsEl = document.querySelector('a-asse
     ensureForStep,
     warmupGroups,
     getStatus,
+    groupAssetIds,
   };
 }
