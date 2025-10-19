@@ -1,9 +1,50 @@
-const WOLF_MIND = './assets/targets/wolf.mind';
+const MIND_KEY_ALIASES = {
+  intro: 'wolf',
+  shapoklyak: 'shepoklak',
+  'find-mouse': 'lariska',
+};
+
+const MIND_SOURCES = {
+  wolf: './assets/targets/wolf.mind',
+  gena: './assets/targets/gena.mind',
+  cheburashka: './assets/targets/cheburashka.mind',
+  shepoklak: './assets/targets/shepoklak.mind',
+  lariska: './assets/targets/lariska.mind',
+  trio: './assets/targets/trio.mind',
+  cheburashkastand: './assets/targets/cheburashkastand.mind',
+  souzmultipark: './assets/targets/cheburashkastand.mind',
+};
+
+const MIND_ASSET_IDS = {
+  wolf: 'wolfMind',
+  gena: 'genaMind',
+  cheburashka: 'cheburashkaMind',
+  shepoklak: 'shepoklakMind',
+  lariska: 'lariskaMind',
+  trio: 'trioMind',
+  cheburashkastand: 'cheburashkastandMind',
+  souzmultipark: 'cheburashkastandMind',
+};
+
+const normalizeMindKey = (rawKey) => {
+  if (!rawKey) return null;
+  const key = rawKey.toString().toLowerCase();
+  return MIND_KEY_ALIASES[key] || key;
+};
+
+const mindKeyFromSrc = (src) => {
+  if (typeof src !== 'string') return null;
+  const match = src.match(/\/([a-z0-9_-]+)\.mind/i);
+  if (!match) return null;
+  return normalizeMindKey(match[1]);
+};
 
 const CAMERA_PERMISSION_CONSTRAINTS = {
   audio: false,
   video: { facingMode: { ideal: 'environment' } },
 };
+
+const SCALE_REDUCE_150 = 1 / 1.5;
 
 export function createARController({
   sceneEl,
@@ -42,6 +83,51 @@ export function createARController({
     }
   };
 
+  const resolveMindSrc = (mindHint, fallbackKey = null) => {
+    const tryByKey = (key) => {
+      const normalized = normalizeMindKey(key);
+      if (!normalized) return null;
+      const assetId = MIND_ASSET_IDS[normalized];
+      if (assetId && assetPreloader?.getAssetUrl) {
+        const preloaded = assetPreloader.getAssetUrl(assetId);
+        if (preloaded) return preloaded;
+      }
+      return MIND_SOURCES[normalized] || null;
+    };
+
+    const hintKey = mindKeyFromSrc(mindHint);
+    const hintResolved = tryByKey(hintKey);
+    if (hintResolved) return hintResolved;
+
+    const fallbackResolved = tryByKey(fallbackKey);
+    if (fallbackResolved) return fallbackResolved;
+
+    if (mindHint) return mindHint;
+    return tryByKey('wolf') || MIND_SOURCES.wolf;
+  };
+
+  const questStepHintMap = {
+    wolf: 'Совмести рамку со скульптурой Волка и Зайца.',
+    gena: 'Найди скульптуру Крокодила Гены и держи её в кадре.',
+    cheburashka: 'Наведи камеру на скульптуру Чебурашки — дождь апельсинов скоро начнётся!',
+    shapoklyak: 'Совмести рамку со скульптурой Шапокляк.',
+    cheburashkastand: 'Наведи камеру на стенд с Чебурашками, чтобы забрать билет.',
+    trio: 'Совмести рамку с трио Гены, Чебурашки и Шапокляк.',
+  };
+
+  const getQuestStepKey = (rawStep) => {
+    const step = (rawStep || 'wolf').toString();
+    return step === 'intro' ? 'wolf' : step;
+  };
+
+  const applyQuestScanHint = (stepOverride) => {
+    if (!ui?.setInteractionHint || state.mode !== 'quest' || !quest) return;
+    const activeStep = stepOverride || (quest.getStep ? quest.getStep() : 'intro');
+    const key = getQuestStepKey(activeStep);
+    const hint = questStepHintMap[key];
+    if (hint) ui.setInteractionHint(hint);
+  };
+
   let sceneReady = sceneEl.hasLoaded ?? false;
   let storedSceneConfig = null;
 
@@ -58,6 +144,25 @@ export function createARController({
     return new Promise((resolve) => {
       sceneReadyWaiters.push(resolve);
     });
+  };
+
+  const waitForMindARSystem = async (sceneReadyPromise, timeoutMs = 8000, pollMs = 60) => {
+    try {
+      await sceneReadyPromise;
+    } catch (error) {
+      console.warn('[AR] waitForMindARSystem scene wait failed', error);
+    }
+    const getSystem = () => (sceneEl && sceneEl.systems && sceneEl.systems['mindar-image-system']) || null;
+    let sys = getSystem();
+    if (sys) return sys;
+    const deadline = Date.now() + Math.max(0, timeoutMs || 0);
+    const interval = Math.max(16, pollMs || 16);
+    while (!sys && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, interval));
+      sys = getSystem();
+      if (sys) return sys;
+    }
+    return sys || null;
   };
 
   let selfieVideo = null;
@@ -169,6 +274,13 @@ export function createARController({
       await wolfAhAudio.play();
     } catch(_) {}
   };
+  let wolfIntroAudioTriggered = false;
+  const resetWolfIntroAudio = () => { wolfIntroAudioTriggered = false; };
+  const triggerWolfIntroAudio = () => {
+    if (wolfIntroAudioTriggered) return;
+    wolfIntroAudioTriggered = true;
+    try { playWolfAhAudio(); } catch(_) {}
+  };
   const playWolfBigJumpAudio = async () => {
     ensureWolfAudios();
     // Reset positions
@@ -229,6 +341,7 @@ export function createARController({
   // One-logo chase: logo hops at side A (near hare), then travels in an arc to side B (reveals hare), hops, and returns. Loops.
   const addLogoChaseToRoot = (root, spec) => {
     if (!root) return;
+    resetWolfIntroAudio();
     try { dlog('CHASE: build start', spec); } catch(_) {}
     const xR = spec.rightX ?? 0.5;
     const xL = spec.leftX ?? -0.5;
@@ -271,7 +384,7 @@ export function createARController({
     try { dlog('CHASE: nodes created', { holderPos: holder.getAttribute('position'), arcPos: arc.getAttribute('position'), logoPos: logo.getAttribute('position') }); } catch(_) {}
 
     // Fit logo once loaded
-    const fitOnce = () => { try { const obj = logo.getObject3D('mesh'); if (!obj) return; const box = new AFRAME.THREE.Box3().setFromObject(obj); const size = new AFRAME.THREE.Vector3(); box.getSize(size); const k = (fitLogo||0.3)/(Math.max(size.x,size.y,size.z)||1); if (isFinite(k)&&k>0&&k<1000) obj.scale.multiplyScalar(k); obj.traverse(n=>{ if (n.isMesh) n.renderOrder = 3; }); } catch(_){} };
+      const fitOnce = () => { try { const obj = logo.getObject3D('mesh'); if (!obj) return; const box = new AFRAME.THREE.Box3().setFromObject(obj); const size = new AFRAME.THREE.Vector3(); box.getSize(size); const k = (fitLogo||0.3)/(Math.max(size.x,size.y,size.z)||1); if (isFinite(k)&&k>0&&k<1000) { try{ obj.scale.setScalar(k);}catch(_){ obj.scale.multiplyScalar(k);} } obj.traverse(n=>{ if (n.isMesh) n.renderOrder = 3; }); } catch(_){} };
     if (logo.getObject3D('mesh')) fitOnce(); else logo.addEventListener('model-loaded', fitOnce, { once: true });
 
     // Static hare at right side, strictly behind the logo (further from camera)
@@ -288,7 +401,7 @@ export function createARController({
     hare.setAttribute('rotation', spec.hareRot || '0 -90 0');
     hare.setAttribute('visible', 'true');
     root.appendChild(hare);
-    const fitHare = () => { try { const obj = hare.getObject3D('mesh'); if (!obj) return; const box = new AFRAME.THREE.Box3().setFromObject(obj); const size = new AFRAME.THREE.Vector3(); box.getSize(size); const k = (hareFit||0.17)/(Math.max(size.x,size.y,size.z)||1); if (isFinite(k)&&k>0&&k<1000) obj.scale.multiplyScalar(k);} catch(_){} };
+      const fitHare = () => { try { const obj = hare.getObject3D('mesh'); if (!obj) return; const box = new AFRAME.THREE.Box3().setFromObject(obj); const size = new AFRAME.THREE.Vector3(); box.getSize(size); const k = (hareFit||0.17)/(Math.max(size.x,size.y,size.z)||1); if (isFinite(k)&&k>0&&k<1000) { try{ obj.scale.setScalar(k);}catch(_){ obj.scale.multiplyScalar(k);} } } catch(_){} };
     if (hare.getObject3D('mesh')) fitHare(); else hare.addEventListener('model-loaded', fitHare, { once: true });
 
     try { dlog('CHASE: hare placed', { harePos: hare.getAttribute('position'), hareRot: hare.getAttribute('rotation') }); } catch(_) {}
@@ -390,8 +503,13 @@ export function createARController({
     const onIntroHeadDone = () => { try { logo.emit('chase-intro-ground'); } catch(_) {} };
     const onIntroGroundDone = () => { try { holder.emit('chase-intro-shift'); } catch(_) {} };
     const onIntroShiftDone = () => { smallCount = 0; setTimeout(startSmall, 120); };
-    try { logo.addEventListener('animationstart__introDrop', ()=>{ try { playWolfAhAudio(); } catch(_) {} }, { once: true }); } catch(_) {}
-    try { logo.addEventListener('animationstart__introDrop', ()=>{ try { playWolfAhAudio(); } catch(_) {} }, { once: true }); } catch(_) {}
+    const onIntroDropStart = () => {
+      try { triggerWolfIntroAudio(); } catch(_) {}
+      try { logo.removeEventListener('animationstart__introDrop', onIntroDropStart); } catch(_) {}
+      try { logo.removeEventListener('animationbegin__introDrop', onIntroDropStart); } catch(_) {}
+    };
+    try { logo.addEventListener('animationstart__introDrop', onIntroDropStart); } catch(_) {}
+    try { logo.addEventListener('animationbegin__introDrop', onIntroDropStart); } catch(_) {}
     bindAnimEnd(logo, 'introDrop', onIntroDropDone);
     bindAnimEnd(logo, 'introHead', onIntroHeadDone);
     bindAnimEnd(logo, 'introGround', onIntroGroundDone);
@@ -575,15 +693,17 @@ export function createARController({
       if (trioModeActive) {
         try { guide.setState('hidden'); } catch(_) {}
         try { guide.showSubtitles('Сфоткайся вместе со всеми!'); } catch(_) {}
+        applyQuestScanHint('trio');
       } else {
       const st = (quest.getStep && quest.getStep()) || 'intro';
       try {
-        if (st === 'gena') { guide.dockToCorner('tl'); guide.showSubtitles('Наведи камеру на Гену!'); }
-        else if (st === 'cheburashka') { guide.dockToCorner('tl'); guide.showSubtitles('Наведи камеру на Чебурашку!'); }
-        else if (st === 'cheburashkastand') { guide.dockToCorner('tl'); guide.showSubtitles('Наведись на чебурашек! Получи приз!'); }
-        else if (st === 'shapoklyak') { guide.setState('hidden'); guide.showSubtitles('Наведи камеру на Шапокляк!'); }
-        else { guide.setState('talk'); guide.showSubtitles('Наведи камеру на волка!'); }
+        if (st === 'gena') { guide.dockToCorner('tl'); guide.showSubtitles('Гена уже близко — найди его статую в кадре.'); }
+        else if (st === 'cheburashka') { guide.dockToCorner('tl'); guide.showSubtitles('Чебурашка ждёт фото. Наведи на него камеру!'); }
+        else if (st === 'cheburashkastand') { guide.dockToCorner('tl'); guide.showSubtitles('Наведись на чебурашек и забери билет!'); }
+        else if (st === 'shapoklyak') { guide.setState('hidden'); guide.showSubtitles('Шапокляк рядом! Совмести рамку с её статуей.'); }
+        else { guide.setState('talk'); guide.showSubtitles('Волк с Зайцем где-то рядом. Наведи камеру на их скульптуру!'); }
       } catch(_) {}
+      applyQuestScanHint(st);
       }
     }
     bindVideoHandlers();
@@ -603,15 +723,13 @@ export function createARController({
   // No explicit waiting on metadata; we attach handlers and proceed
 
   const start = async () => {
-    if (!sceneReady) {
-      console.warn('[AR] Scene is not ready yet; waiting for load…');
-      try { await waitForSceneReady(); } catch (_) { /* ignore */ }
-    }
+    const waitSceneReady = sceneReady ? Promise.resolve() : waitForSceneReady();
+    const cameraPromise = cameraAccessGranted ? Promise.resolve(true) : ensureCameraAccess();
 
     ui.hideUnsupported();
 
     try {
-      await ensureCameraAccess();
+      await cameraPromise;
     } catch (error) {
       console.warn('[AR] Camera permission is required', error);
       ui.exitARMode();
@@ -626,10 +744,11 @@ export function createARController({
     ui.setTrackingState('loading');
     ui.setCaptureLabel('Сделать кадр');
     ui.setCaptureEnabled(false);
+    ui.setSkipVisible && ui.setSkipVisible(state.mode === 'quest');
     // При любом новом старте AR выходим из режима трио
     trioModeActive = false;
 
-    const mindarSystem = sceneEl.systems['mindar-image-system'];
+    const mindarSystem = await waitForMindARSystem(waitSceneReady, 8000);
     if (!mindarSystem) {
       console.error('[AR] MindAR system is not available');
       ui.exitARMode();
@@ -638,8 +757,9 @@ export function createARController({
     }
 
     try {
+      const defaultMultiMind = MIND_SOURCES.trio || './assets/targets/trio.mind';
       const baseCfg = {
-      imageTargetSrc: './assets/targets/trio.mind',
+        imageTargetSrc: resolveMindSrc(defaultMultiMind, 'trio'),
         maxTrack: 3,
         showStats: false,
         uiLoading: 'no',
@@ -658,17 +778,27 @@ export function createARController({
         enableOnlyGenericAnchor();
 
         if (state.mode === 'heroes' && state.hero?.mind) {
-          baseCfg.imageTargetSrc = (state.hero.key === 'wolf') ? WOLF_MIND : state.hero.mind;
+          const heroMindPath = state.hero.mind;
+          const heroKey = state.hero.key;
+          baseCfg.imageTargetSrc = resolveMindSrc(heroMindPath, heroKey);
           await prepareHeroScene();
+          baseCfg.imageTargetSrc = resolveMindSrc(heroMindPath, heroKey);
         } else if (state.mode === 'quest') {
           const currentStep = quest.getStep();
           // quest.mindForStep will fall back appropriately for 'intro'
           const stepKey = currentStep === 'intro' ? 'wolf' : currentStep;
-          baseCfg.imageTargetSrc = (stepKey === 'wolf') ? WOLF_MIND : quest.getMindForStep(currentStep);
+          const stepMindPath = quest.getMindForStep(currentStep);
+          baseCfg.imageTargetSrc = resolveMindSrc(stepMindPath, stepKey);
           await prepareGenericForStep(currentStep);
+          baseCfg.imageTargetSrc = resolveMindSrc(stepMindPath, stepKey);
+        } else {
+          const wolfMindPath = MIND_SOURCES.wolf || './assets/targets/wolf.mind';
+          await ensureAssetsForStep('intro');
+          baseCfg.imageTargetSrc = resolveMindSrc(wolfMindPath, 'wolf');
         }
       } else {
         await ensureAssetsForStep('intro');
+        baseCfg.imageTargetSrc = resolveMindSrc(defaultMultiMind, 'trio');
         restoreAnchorsFromBackup();
         anchors.forEach((a) => a.setAttribute('visible', a.id !== 'anchor-generic'));
       }
@@ -837,7 +967,7 @@ export function createARController({
       ui.setTrackingFoundMessage(`${label} ${verb}`);
     } else {
       const map = {
-        'anchor-cheb': 'Чебурашка найден!',
+        'anchor-cheb': 'Чебурашка найдена!',
         'anchor-shap': 'Все в сборе!',
         'anchor-wolf': 'Волк и Заяц найдены!',
       };
@@ -845,9 +975,9 @@ export function createARController({
     }
 
     if (state.mode === 'heroes' && state.hero) {
-      ui.setInteractionHint(`Нашёлся: ${state.hero.title}. Сделай кадр!`);
+      ui.setInteractionHint(`${state.hero.title} уже здесь! Сделай кадр!`);
     } else {
-      ui.setInteractionHint('Позируйте рядом с героем и готовьтесь к фото.');
+      ui.setInteractionHint('Позируй рядом с героем и готовься к фото.');
     }
       ui.setCaptureEnabled(true);
 
@@ -888,6 +1018,7 @@ export function createARController({
           const logo = root.querySelector('#logo-chase');
           if (chase.dataset.introPlayed !== '1') {
             logo?.emit('chase-intro-drop');
+            triggerWolfIntroAudio();
             chase.dataset.introPlayed = '1';
           } else {
             logo?.emit('small-hop');
@@ -925,23 +1056,28 @@ export function createARController({
 
       // Сцена стенда Чебурашек: звёзды, скрыть кнопки, яркий CTA и клик на сайт
       try {
-        const isStand = state.mode === 'quest' && (quest.getStep && quest.getStep()) === 'cheburashkastand';
-        if (isStand) {
+        const isStandQuest = state.mode === 'quest' && (quest.getStep && quest.getStep()) === 'cheburashkastand';
+        const isStandHero = state.mode === 'heroes' && state.hero?.key === 'souzmultipark';
+        if (isStandQuest || isStandHero) {
           const root = document.getElementById('scene-generic');
           // Запускаем эмиттер звёзд (на дочернем узле), а не на корне
           try {
             const stars = root && root.querySelector('#cheb-stand-stars');
             stars && stars.emit('effect-start');
           } catch(_) {}
-          // Бросаем билет сверху
-          const t = root && root.querySelector('#cheb-stand-ticket');
-          try { t && t.emit('stand-drop'); } catch(_) {}
-          ui.setCaptureEnabled(false);
-          ui.setCaptureLabel('Сделать кадр');
-          ui.setCaptureVisible && ui.setCaptureVisible(false);
-          ui.setSkipVisible && ui.setSkipVisible(false);
+          if (isStandQuest) {
+            ui.setCaptureEnabled(false);
+            ui.setCaptureLabel('Сделать кадр');
+            ui.setCaptureVisible && ui.setCaptureVisible(false);
+            ui.setSkipVisible && ui.setSkipVisible(false);
+          } else {
+            ui.setCaptureEnabled(true);
+            ui.setCaptureVisible && ui.setCaptureVisible(true);
+            ui.setCaptureLabel && ui.setCaptureLabel('Сделать кадр');
+          }
+          ui.setInteractionHint && ui.setInteractionHint('Нажми на билет, чтобы забрать приз.');
           guide.setState('hidden');
-          guide.setCTA('Нажми на билет!');
+          guide.setCTA('Ты получил билет! Нажми на него!');
           enableStandClickMode();
         }
       } catch(_) {}
@@ -970,10 +1106,14 @@ export function createARController({
     if (!anyVisible) {
       if (trioModeActive) {
         ui.setTrackingState('lost_trio');
-        ui.setInteractionHint('Совместите рамку с трио гены, чебурашки и шапокляк');
+        applyQuestScanHint('trio');
       } else {
         ui.setTrackingState('lost');
-        ui.setInteractionHint('Совместите рамку с изображением персонажа.');
+        if (state.mode === 'quest') {
+          applyQuestScanHint();
+        } else {
+          ui.setInteractionHint('Совмести рамку с изображением персонажа.');
+        }
       }
       try {
         // Выключаем дождь апельсинов при потере таргета Чебурашки
@@ -986,8 +1126,9 @@ export function createARController({
         const isHeroShap = state.mode === 'heroes' && state.hero?.key === 'shepoklak';
         if (isQuestShap || isHeroShap) { root && root.emit('effect-stop'); stopShapAudio(); }
         // Остановить стенд Чебурашек и вернуть UI
-        const isStand = state.mode === 'quest' && (quest.getStep && quest.getStep()) === 'cheburashkastand';
-        if (isStand) {
+        const isStandQuest = state.mode === 'quest' && (quest.getStep && quest.getStep()) === 'cheburashkastand';
+        const isStandHero = state.mode === 'heroes' && state.hero?.key === 'souzmultipark';
+        if (isStandQuest || isStandHero) {
           try {
             const stars = root && root.querySelector('#cheb-stand-stars');
             stars && stars.emit('effect-stop');
@@ -1001,11 +1142,11 @@ export function createARController({
             guide.dockToCorner('tl');
           } else {
           const st = quest.getStep ? quest.getStep() : 'intro';
-          if (st === 'gena') { guide.showSubtitles('Наведи камеру на Гену!'); guide.dockToCorner('tl'); }
-          else if (st === 'cheburashka') { guide.showSubtitles('Наведи камеру на Чебурашку!'); guide.dockToCorner('tl'); }
-          else if (st === 'cheburashkastand') { guide.showSubtitles('Наведись на чебурашек! Получи приз!'); guide.dockToCorner('tl'); }
-          else if (st === 'shapoklyak') { guide.showSubtitles('Наведи камеру на Шапокляк!'); guide.dockToCorner('tl'); }
-          else { guide.showSubtitles('Наведи камеру на волка!'); }
+          if (st === 'gena') { guide.showSubtitles('Гена уже близко — найди его статую в кадре.'); guide.dockToCorner('tl'); }
+          else if (st === 'cheburashka') { guide.showSubtitles('Чебурашка ждёт фото. Наведи на него камеру!'); guide.dockToCorner('tl'); }
+          else if (st === 'cheburashkastand') { guide.showSubtitles('Наведись на чебурашек и забери билет!'); guide.dockToCorner('tl'); }
+          else if (st === 'shapoklyak') { guide.showSubtitles('Шапокляк рядом! Совмести рамку с её статуей.'); guide.dockToCorner('tl'); }
+          else { guide.showSubtitles('Волк с Зайцем где-то рядом. Наведи камеру на их скульптуру!'); guide.dockToCorner('tl'); }
           }
         }
       } catch (_) {}
@@ -1055,7 +1196,10 @@ export function createARController({
         const target = e.target;
         // Игнорируем клики по оверлею/кнопкам UI
         const overlay = document.getElementById('ar-overlay');
-        if (overlay && overlay.contains(target)) return;
+        if (overlay && overlay.contains(target)) {
+          const elTarget = target instanceof Element ? target : null;
+          if (elTarget && (elTarget.closest('.capture-controls') || elTarget.closest('#back-to-main'))) return;
+        }
         e.preventDefault();
         window.open('https://souzmultpark.ru', '_blank', 'noopener');
         // После перехода отключаем режим клика, чтобы не открывать повторно
@@ -1073,7 +1217,7 @@ export function createARController({
     }
     try { if (wrapper) wrapper.style.cursor = ''; } catch(_) {}
     ui.setCaptureVisible && ui.setCaptureVisible(true);
-    ui.setSkipVisible && ui.setSkipVisible(true);
+    ui.setSkipVisible && ui.setSkipVisible(state.mode === 'quest');
     guide.clearCTA && guide.clearCTA();
     standClickActive = false;
     standClickHandler = null;
@@ -1083,17 +1227,20 @@ export function createARController({
   const prepareHeroScene = async () => {
     const root = document.getElementById('scene-generic');
     if (!root) return;
+    disableStandClickMode();
     await ensureAssetsForHero(state.hero?.key);
     while (root.firstChild) root.removeChild(root.firstChild);
     root.setAttribute('scale', '1 1 1');
     root.removeAttribute('animation__pop');
 
+    const heroKey = state.hero?.key || null;
+
     // Special: Trio scene in single-hero mode
-    if (state.hero?.key === 'trio') {
+    if (heroKey === 'trio') {
       trioModeActive = true; // enable trio messaging/flow
       try { buildTrioScenery(root); } catch(_) {}
       try {
-        ui.setInteractionHint('Совместите рамку с трио гены, чебурашки и шапокляк');
+        ui.setInteractionHint('Совмести рамку с трио Гены, Чебурашки и Шапокляк.');
       } catch(_) {}
       // No additional effects
       return;
@@ -1102,29 +1249,37 @@ export function createARController({
     const spec = specForHero(state.hero?.key);
     try { dlog('PREPARE hero', state.hero?.key, spec); } catch(_) {}
     let shapSceneReady = false;
+    let standSceneReady = false;
     try {
-      if (state.hero?.key === 'gena') {
-        // Спавним ноты чуть ниже центра
-        root.setAttribute('music-notes', 'baseY: -0.08');
+      if (heroKey === 'gena') {
+        // Фиксируем размер нот
+        root.setAttribute('music-notes', 'baseY: -0.08; size: 6');
       } else {
         root.removeAttribute('music-notes');
       }
-      if (state.hero?.key === 'cheburashka') {
+      if (heroKey === 'cheburashka') {
         ensureChebCollider(root);
         root.setAttribute('orange-rain', buildChebRainAttrib());
       } else {
         root.removeAttribute('orange-rain');
       }
-      if (state.hero?.key === 'shepoklak') {
+      if (heroKey === 'shepoklak') {
         // Для одиночной сцены Шапокляк подключаем тот же мини-сценарий с сыром и Лариской
         addShapoklyakCheeseScene(root);
         shapSceneReady = true;
       }
+      if (heroKey === 'souzmultipark') {
+        addChebStandScene(root);
+        standSceneReady = true;
+      }
     } catch (error) {
       console.warn('[AR] prepareHeroScene failed', error);
     }
-    if (state.hero?.key === 'shepoklak' && shapSceneReady) {
+    if (heroKey === 'shepoklak' && shapSceneReady) {
       // Уже добавили контент сцены Шапокляк
+      return;
+    }
+    if (heroKey === 'souzmultipark' && standSceneReady) {
       return;
     }
     if (spec && spec.logoChase) {
@@ -1152,8 +1307,8 @@ export function createARController({
     let shapStepReady = false;
     try {
       if (step === 'gena') {
-        // Спавним ноты чуть ниже центра
-        root.setAttribute('music-notes', 'baseY: -0.08');
+        // Фиксируем размер нот
+        root.setAttribute('music-notes', 'baseY: -0.08; size: 6');
       } else {
         root.removeAttribute('music-notes');
       }
@@ -1198,10 +1353,10 @@ export function createARController({
       // Attach to DOM first so components initialize reliably
       root.appendChild(ticket);
       // Visual + render settings (before model loads)
-      ticket.setAttribute('rotation', '0 0 0');
+      ticket.setAttribute('rotation', '0 90 0');
       ticket.setAttribute('visible', 'true');
-      ticket.setAttribute('force-opaque', 'mode: opaque; doubleSide: true; renderOrder: 20');
-      ticket.setAttribute('mesh-outline', 'color: #FFD400; opacity: 0.35; scale: 1.06');
+      ticket.setAttribute('force-opaque', 'mode: opaque; doubleSide: false; renderOrder: 20');
+      ticket.setAttribute('animation__pulse', 'property: scale; from: 1 1 1; to: 1.18 1.18 1.18; dir: alternate; loop: true; dur: 900; easing: easeInOutSine');
       // Bind model AFTER append
       safeSetGltfModel(ticket, '#ticketModel');
       // Auto-fit once loaded
@@ -1213,38 +1368,33 @@ export function createARController({
           const size = new AFRAME.THREE.Vector3();
           box.getSize(size);
           const currentMax = Math.max(size.x, size.y, size.z) || 1;
-          // Large ticket to ensure visibility
-          const desired = 6.0;
+          // Desired max dimension for ticket model (scaled up 1.7x)
+          const desired = 0.17;
           const k = desired / currentMax;
-          if (isFinite(k) && k > 0 && k < 1000) obj.scale.multiplyScalar(k);
+          if (isFinite(k) && k > 0 && k < 1000) {
+            try { obj.scale.setScalar(k); } catch(_) { obj.scale.multiplyScalar(k); }
+          }
           // Push render order on meshes too
           try { obj.traverse((n)=>{ if (n.isMesh) n.renderOrder = 20; }); } catch(_) {}
         } catch(_) {}
       };
       if (ticket.getObject3D('mesh')) fitOnce(); else ticket.addEventListener('model-loaded', fitOnce, { once: true });
       // Put clearly in front of the plane to avoid occlusion (negative Z faces camera)
-      ticket.setAttribute('position', `0 0 -0.20`);
-      // Drop-in from above with soft bounce (same Z lane)
-      ticket.setAttribute('animation__drop', `property: position; from: 0 0.8 -0.20; to: 0 0 -0.20; dur: 900; easing: easeOutCubic; startEvents: stand-drop`);
-      ticket.setAttribute('animation__bounce', `property: position; from: 0 0 -0.20; to: 0 0.08 -0.20; dir: alternate; loop: 1; dur: 240; easing: easeOutCubic; startEvents: animationcomplete__drop`);
-
-      // Extra diagnostics for ticket
+      ticket.setAttribute('position', `0 0.08 -0.20`);
+      // Basic error handling: if the model fails, show a simple fallback plane.
       try {
-        const onLoaded = () => { console.log('[TICKET][LOADED] ok'); };
-        const onError = (e) => { console.warn('[TICKET][ERROR]', e?.detail || e); };
-        ticket.addEventListener('model-loaded', onLoaded, { once: true });
-        ticket.addEventListener('model-error', onError, { once: true });
-        setTimeout(()=>{
-          if (!ticket.getObject3D('mesh')) {
-            console.warn('[TICKET][TIMEOUT] no mesh, adding fallback plane');
+        const onError = (e) => {
+          console.warn('[TICKET][ERROR]', e?.detail || e);
+          if (!ticket.querySelector('[data-ticket-fallback="1"]')) {
             const fallback = document.createElement('a-entity');
             fallback.setAttribute('geometry', 'primitive: plane; width: 1.2; height: 0.6');
             fallback.setAttribute('material', 'color: #cc2244; side: double; opacity: 0.9');
-            // Ensure fallback is also in front of target
             fallback.setAttribute('position', '0 0 -0.21');
+            fallback.dataset.ticketFallback = '1';
             ticket.appendChild(fallback);
           }
-        }, 2500);
+        };
+        ticket.addEventListener('model-error', onError);
       } catch(_) {}
     } catch(_) {}
 
@@ -1255,7 +1405,7 @@ export function createARController({
       // Put slightly in front to avoid occlusion by target plane (negative Z faces camera)
       emit.setAttribute('position', '0 0 -0.02');
       // Bigger, longer-living, and more abundant stars
-      emit.setAttribute('star-emitter', 'model: #cuteStarModel; rate: 60; max: 400; size: 0.22; baseY: 0.02; speedMin: 0.30; speedMax: 0.75; lifeMin: 4.0; lifeMax: 7.0; outBias: 1.0; spinMin: 180; spinMax: 720');
+      emit.setAttribute('star-emitter', 'model: #cuteStarModel; rate: 28; max: 160; maxPerFrame: 6; size: 0.204; baseY: 0.02; speedMin: 0.22; speedMax: 0.48; lifeMin: 5.0; lifeMax: 8.0; outBias: 0.8; spinMin: 40; spinMax: 140');
       root.appendChild(emit);
     } catch(_) {}
   };
@@ -1273,21 +1423,21 @@ export function createARController({
     // Cheese
     const cheese = document.createElement('a-entity');
     cheese.id = 'cheese-prop';
-    safeSetGltfModel(cheese, '#cheeseModel');
     cheese.setAttribute('position', `${cheeseX} ${baseYCheese} ${zLane}`);
     cheese.setAttribute('rotation', '0 -90 0'); // rotate +90° clockwise
-    root.appendChild(cheese);
+    root.appendChild(cheese); // attach before binding glTF to avoid missing models on mobile
+    safeSetGltfModel(cheese, '#cheeseModel');
 
     // Mouse (Lariska)
     const mouse = document.createElement('a-entity');
     mouse.id = 'lariska-actor';
-    safeSetGltfModel(mouse, '#lariskaModel');
     mouse.setAttribute('position', `${mouseStartX} -0.44 ${zLane}`);
     mouse.setAttribute('rotation', '0 90 0'); // face towards cheese
     mouse.setAttribute('visible', 'true');
+    root.appendChild(mouse); // same DOM-first pattern for reliable glTF init
+    safeSetGltfModel(mouse, '#lariskaModel');
     // Slight idle sway
     // No yaw sway; keep facing cheese (+90°). We'll tilt on sniff.
-    root.appendChild(mouse);
 
     // Auto-fit helpers
     const fitTo = (el, desiredMax=0.40) => {
@@ -1298,7 +1448,9 @@ export function createARController({
         const size = new AFRAME.THREE.Vector3();
         box.getSize(size);
         const factor = (desiredMax || 0.4) / (Math.max(size.x, size.y, size.z) || 1);
-        if (isFinite(factor) && factor > 0 && factor < 1000) obj.scale.multiplyScalar(factor);
+        if (isFinite(factor) && factor > 0 && factor < 1000) {
+          try { obj.scale.setScalar(factor); } catch(_) { obj.scale.multiplyScalar(factor); }
+        }
       } catch (_) {}
     };
     let cheeseReady = false, mouseReady = false, safeStopReady = false;
@@ -1329,7 +1481,8 @@ export function createARController({
         safeStopReady = true;
       }
     };
-    const onCheeseReady = () => { fitTo(cheese, 0.22); cheeseReady = true; setTimeout(tryComputeSafeStop, 0); };
+    const cheeseDesired = Number((0.22 * SCALE_REDUCE_150).toFixed(4));
+    const onCheeseReady = () => { fitTo(cheese, cheeseDesired); cheeseReady = true; setTimeout(tryComputeSafeStop, 0); };
     const onMouseReady = () => { fitTo(mouse, 0.28); mouseReady = true; setTimeout(tryComputeSafeStop, 0); };
     if (cheese.getObject3D('mesh')) onCheeseReady(); else cheese.addEventListener('model-loaded', onCheeseReady, { once: true });
     if (mouse.getObject3D('mesh')) onMouseReady(); else mouse.addEventListener('model-loaded', onMouseReady, { once: true });
@@ -1418,7 +1571,7 @@ export function createARController({
         const desired = spec.fitSize || 0.6; // fraction of target unit
         const factor = desired / currentMax;
         if (isFinite(factor) && factor > 0 && factor < 1000) {
-          obj.scale.multiplyScalar(factor);
+          try { obj.scale.setScalar(factor); } catch(_) { obj.scale.multiplyScalar(factor); }
         }
       } catch (e) {
         // no-op
@@ -1529,7 +1682,9 @@ export function createARController({
           box.getSize(size);
           const currentMax = Math.max(size.x, size.y, size.z) || 1;
           const factor = (fit || 0.16) / currentMax;
-          if (isFinite(factor) && factor > 0 && factor < 1000) obj.scale.multiplyScalar(factor);
+          if (isFinite(factor) && factor > 0 && factor < 1000) {
+            try { obj.scale.setScalar(factor); } catch(_) { obj.scale.multiplyScalar(factor); }
+          }
         } catch (_) {}
       };
       if (node.getObject3D('mesh')) fitOnce(); else node.addEventListener('model-loaded', fitOnce, { once: true });
@@ -1541,6 +1696,16 @@ export function createARController({
     if (!root) return;
     // Clear existing content
     try { while (root.firstChild) root.removeChild(root.firstChild); } catch(_) {}
+
+    const trioScale = 1 / 1.3;
+    const trioPositionScale = 0.45;
+    const scaleFloat = (value, factor, precision = 3) => {
+      const scaled = Number((value * factor).toFixed(precision));
+      return Math.abs(scaled) < Math.pow(10, -precision) ? 0 : scaled;
+    };
+    const scaleVec3Pos = (x = 0, y = 0, z = 0) => `${scaleFloat(x, trioPositionScale)} ${scaleFloat(y, trioPositionScale)} ${scaleFloat(z, trioPositionScale)}`;
+    const scaleFit = (value) => Number((value * trioScale).toFixed(4));
+    const scaleDim = (value) => Number((value * trioScale).toFixed(3));
 
     const makeAndFit = (gltf, { position = '0 0 0', rotation = '0 -90 0', fitSize = 0.6, id } = {}) => {
       const el = document.createElement('a-entity');
@@ -1559,60 +1724,155 @@ export function createARController({
           box.getSize(size);
           const currentMax = Math.max(size.x, size.y, size.z) || 1;
           const factor = (fitSize || 0.6) / currentMax;
-          if (isFinite(factor) && factor > 0 && factor < 1000) obj.scale.multiplyScalar(factor);
+          if (isFinite(factor) && factor > 0 && factor < 1000) {
+            try { obj.scale.setScalar(factor); } catch(_) { obj.scale.multiplyScalar(factor); }
+          }
         } catch (_) {}
       };
       if (el.getObject3D('mesh')) fitOnce(); else el.addEventListener('model-loaded', fitOnce, { once: true });
       return el;
     };
 
-    // 1) Трава внизу (grass.glb)
-    makeAndFit('#grassModel', {
-      id: 'trio-grass',
-      position: '-0.8 -0.85 -0.40',
-      rotation: '0 -90 0',
-      fitSize: 0.02,
-    });
-
-    // 2) Цветы поверх травы (grass_floor.glb)
-    makeAndFit('#grassFloorModel', {
-      id: 'trio-grass-floor',
-      position: '0 -0.85 -0.10',
-      rotation: '0 -90 0',
-      fitSize: 0.15,
-    });
-
-    // 3) Два дерева сзади, слева и справа (tree.glb)
+    // 1) Два дерева сзади, слева и справа (tree.glb)
     makeAndFit('#treeModel', {
       id: 'trio-tree-left',
-      position: '-0.70 -0.85 -0.36',
+      position: scaleVec3Pos(-1.20, -0.85, -0.36),
       rotation: '0 -90 0',
-      fitSize: 0.25,
+      fitSize: scaleFit(0.22),
     });
     makeAndFit('#treeModel', {
       id: 'trio-tree-right',
-      position: '0.70 -0.85 -0.36',
+      position: scaleVec3Pos(1.20, -0.85, -0.36),
       rotation: '0 -90 0',
-      fitSize: 0.25,
+      fitSize: scaleFit(0.22),
     });
 
-    // 4) Логотип по центру вверху (souzmultipark.glb)
+    // 2) Логотип по центру вверху (souzmultipark.glb)
     makeAndFit('#souzmultiparkModel', {
       id: 'trio-logo',
-      position: '0 0.74 -0.12',
+      position: scaleVec3Pos(0, 0.74, -0.12),
       rotation: '0 -90 0',
-      fitSize: 0.52,
+      fitSize: scaleFit(0.52),
     });
 
-    // 5) Солнце слева сверху (sun.glb)
+    // 3) Солнце слева сверху (sun.glb)
     makeAndFit('#sunModel', {
       id: 'trio-sun',
-      position: '-0.86 0.80 -0.32',
+      position: scaleVec3Pos(-0.86, 0.80, -0.32),
       rotation: '0 -90 0',
-      fitSize: 0.42,
+      fitSize: scaleFit(0.36 / 2.5),
     });
 
-    // 6) Фоновые птицы: бесконечный цикл, запускаем по первому попаданию в трио
+    // 4) Рисованные линии, мягко проявляющиеся из логотипа
+    const addHandDrawnLines = () => {
+      const container = document.createElement('a-entity');
+      container.id = 'trio-hand-drawn';
+      container.setAttribute('position', scaleVec3Pos(0, 0.72, -0.16));
+      container.setAttribute('rotation', '0 -90 0');
+      root.appendChild(container);
+
+      const toFixed = (value, fallback) => {
+        const num = Number.isFinite(value) ? value : fallback;
+        return Number(num).toFixed(3);
+      };
+
+      const createStroke = ({
+        id,
+        position = '0 0 0',
+        rotation = [0, 0, 0],
+        height = 0.44,
+        width = 0.078,
+        delay = 0,
+        wiggle = { x: 0, y: 0, z: 4 },
+        color = '#F9D7A6',
+      } = {}) => {
+        const [rx, ry, rz] = rotation;
+        const stroke = document.createElement('a-entity');
+        if (id) stroke.id = id;
+        stroke.setAttribute('geometry', `primitive: plane; height: ${toFixed(height, 0.30)}; width: ${toFixed(width, 0.05)}`);
+        stroke.setAttribute('material', `shader: flat; color: ${color}; opacity: 0.0; transparent: true; side: double`);
+        stroke.setAttribute('position', position);
+        stroke.setAttribute('rotation', `${rx} ${ry} ${rz}`);
+        stroke.setAttribute('scale', '0.02 0.02 0.02');
+        stroke.setAttribute('animation__draw', `property: scale; from: 0.02 0.02 0.02; to: 1.06 1.06 1.06; dur: 720; delay: ${delay}; easing: easeOutCubic`);
+        stroke.setAttribute('animation__settle', `property: scale; from: 1.06 1.06 1.06; to: 1 1 1; dur: 620; delay: ${delay + 640}; easing: easeOutQuad`);
+        stroke.setAttribute('animation__fade', `property: material.opacity; from: 0; to: 0.92; dur: 680; delay: ${delay}; easing: easeOutSine`);
+        const wiggleX = rx + (wiggle?.x || 0);
+        const wiggleY = ry + (wiggle?.y || 0);
+        const wiggleZ = rz + (wiggle?.z || 0);
+        stroke.setAttribute(
+          'animation__wiggle',
+          `property: rotation; from: ${rx} ${ry} ${rz}; to: ${wiggleX} ${wiggleY} ${wiggleZ}; dur: 2200; delay: ${delay + 650}; dir: alternate; loop: true; easing: easeInOutSine`
+        );
+        stroke.setAttribute(
+          'animation__breath',
+          `property: material.opacity; from: 0.86; to: 0.96; dur: 1600; delay: ${delay + 600}; dir: alternate; loop: true; easing: easeInOutSine`
+        );
+        container.appendChild(stroke);
+      };
+
+      const addStrokeDot = ({ id, position, delay = 0, color = '#F9D7A6', radius = 0.022 }) => {
+        const dot = document.createElement('a-entity');
+        if (id) dot.id = id;
+        dot.setAttribute('geometry', `primitive: circle; radius: ${toFixed(radius, 0.022)}`);
+        dot.setAttribute('material', `shader: flat; color: ${color}; opacity: 0; transparent: true; side: double`);
+        dot.setAttribute('rotation', '0 0 0');
+        dot.setAttribute('position', position);
+        dot.setAttribute('scale', '0.02 0.02 0.02');
+        dot.setAttribute('animation__pop', `property: scale; from: 0.02 0.02 0.02; to: 1.04 1.04 1.04; dur: 420; delay: ${delay}; easing: easeOutBack`);
+        dot.setAttribute('animation__fade', `property: material.opacity; from: 0; to: 0.9; dur: 380; delay: ${delay}; easing: easeOutSine`);
+        dot.setAttribute('animation__pulse', `property: material.opacity; from: 0.78; to: 0.96; dur: 1800; delay: ${delay + 520}; dir: alternate; loop: true; easing: easeInOutSine`);
+        container.appendChild(dot);
+      };
+
+      createStroke({
+        id: 'trio-stroke-left',
+        position: scaleVec3Pos(-0.27, 0.04, 0),
+        rotation: [0, 0, 120],
+        height: scaleDim(0.48),
+        width: scaleDim(0.092),
+        delay: 180,
+        wiggle: { z: 5 },
+      });
+
+      createStroke({
+        id: 'trio-stroke-right',
+        position: scaleVec3Pos(0.29, 0.05, 0),
+        rotation: [0, 0, -122],
+        height: scaleDim(0.48),
+        width: scaleDim(0.092),
+        delay: 320,
+        wiggle: { z: -4 },
+      });
+
+      createStroke({
+        id: 'trio-stroke-top',
+        position: scaleVec3Pos(0, 0.30, 0),
+        rotation: [0, 0, 0],
+        height: scaleDim(0.12),
+        width: scaleDim(0.195),
+        delay: 460,
+        wiggle: { z: 3 },
+      });
+
+      addStrokeDot({
+        id: 'trio-stroke-dot-left',
+        position: scaleVec3Pos(-0.34, 0.00, 0),
+        delay: 120,
+        radius: scaleDim(0.022),
+      });
+
+      addStrokeDot({
+        id: 'trio-stroke-dot-right',
+        position: scaleVec3Pos(0.36, 0.01, 0),
+        delay: 260,
+        radius: scaleDim(0.022),
+      });
+    };
+
+    try { addHandDrawnLines(); } catch (error) { console.warn('[AR] trio hand-drawn lines failed', error); }
+
+    // 5) Фоновые птицы: бесконечный цикл, запускаем по первому попаданию в трио
     try {
       const birds = document.createElement('a-entity');
       birds.id = 'trio-birds-sfx';
@@ -1705,17 +1965,58 @@ export function createARController({
       case 'wolf':
         // Один логотип: прыжки у зайца (справа) и перелёт влево, заяц статичен справа
         // Чуть выше прыжок; справа 3 прыжка, слева 2 (см. installAnimations)
-        // Уменьшаем логотип и зайца ещё на 1.2x; приземление чуть ниже
-        return { logoChase: true, rotation: '0 -90 0', rightX: 0.60, leftX: -0.60, baseZ: -0.14, baseY: -0.08, hop: 0.12, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, arcY: 0.70, fitLogo: 1.60, hareModel: '#rabbitModel', hareX: 0.60, hareZ: -0.30, hareY: -0.08, hareFit: 0.975, hareRot: '0 -90 0', headOffsetY: 0.18 };
+        // Дополнительно уменьшаем логотип и зайца (ещё на 1.5x); приземление чуть ниже
+        return {
+          logoChase: true,
+          rotation: '0 -90 0',
+          rightX: 0.60,
+          leftX: -0.60,
+          baseZ: -0.14,
+          baseY: -0.08,
+          hop: 0.12,
+          hopDurMin: 900,
+          hopDurMax: 1400,
+          travelDur: 1100,
+          arcY: 0.70,
+          fitLogo: Number((1.60 * SCALE_REDUCE_150).toFixed(4)),
+          hareModel: '#rabbitModel',
+          hareX: 0.60,
+          hareZ: -0.30,
+          hareY: -0.08,
+          hareFit: Number((0.975 * SCALE_REDUCE_150).toFixed(4)),
+          hareRot: '0 -90 0',
+          headOffsetY: 0.18,
+        };
       case 'shepoklak':
         return { model: '#lariskaModel', scale: '0.4 0.4 0.4', position: '0 -0.05 0', rotation: '0 20 0', mixer: true };
       case 'lariska':
         return { model: '#lariskaModel', scale: '0.4 0.4 0.4', position: '0 -0.05 0', rotation: '0 20 0', mixer: true };
       case 'souzmultipark':
-        return { model: '#souzmultiparkModel', fitSize: 0.8 };
+        // Поддерживаем отдельную сцену стенда Чебурашек (ticket + звёзды)
+        return null;
       default:
         // По умолчанию — параметры как у волка
-        return { logoChase: true, rotation: '0 -90 0', rightX: 0.60, leftX: -0.60, baseZ: -0.14, baseY: -0.08, hop: 0.12, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, arcY: 0.70, fitLogo: 1.60, hareModel: '#rabbitModel', hareX: 0.60, hareZ: -0.30, hareY: -0.08, hareFit: 0.975, hareRot: '0 -90 0', headOffsetY: 0.18 };
+        return {
+          logoChase: true,
+          rotation: '0 -90 0',
+          rightX: 0.60,
+          leftX: -0.60,
+          baseZ: -0.14,
+          baseY: -0.08,
+          hop: 0.12,
+          hopDurMin: 900,
+          hopDurMax: 1400,
+          travelDur: 1100,
+          arcY: 0.70,
+          fitLogo: Number((1.60 * SCALE_REDUCE_150).toFixed(4)),
+          hareModel: '#rabbitModel',
+          hareX: 0.60,
+          hareZ: -0.30,
+          hareY: -0.08,
+          hareFit: Number((0.975 * SCALE_REDUCE_150).toFixed(4)),
+          hareRot: '0 -90 0',
+          headOffsetY: 0.18,
+        };
     }
   };
 
@@ -1735,8 +2036,28 @@ export function createARController({
       case 'wolf':
       case 'intro':
       default:
-        // В квесте — уменьшили логотип и зайца на 1.2x дополнительно, логотип приземляется чуть ниже
-        return { logoChase: true, rotation: '0 -90 0', rightX: 0.52, leftX: -0.52, baseZ: -0.12, hop: 0.09, hopDurMin: 900, hopDurMax: 1400, travelDur: 1100, holdRight: 2600, holdLeft: 2600, arcY: 0.6, fitLogo: 0.6667, hareModel: '#rabbitModel', hareX: 0.52, hareZ: -0.28, hareFit: 0.375, hareRot: '0 -90 0', headOffsetY: 0.18 };
+        // В квесте — дополнительно уменьшили логотип и зайца (ещё на 1.5x), логотип приземляется чуть ниже
+        return {
+          logoChase: true,
+          rotation: '0 -90 0',
+          rightX: 0.52,
+          leftX: -0.52,
+          baseZ: -0.12,
+          hop: 0.09,
+          hopDurMin: 900,
+          hopDurMax: 1400,
+          travelDur: 1100,
+          holdRight: 2600,
+          holdLeft: 2600,
+          arcY: 0.6,
+          fitLogo: Number((0.6667 * SCALE_REDUCE_150).toFixed(4)),
+          hareModel: '#rabbitModel',
+          hareX: 0.52,
+          hareZ: -0.28,
+          hareFit: Number((0.375 * SCALE_REDUCE_150).toFixed(4)),
+          hareRot: '0 -90 0',
+          headOffsetY: 0.18,
+        };
     }
   };
 
@@ -1786,12 +2107,14 @@ export function createARController({
 
   const handleResize = () => {
     tweakCameraClipping();
+    try { guide?.refreshLayout?.({ immediate: true }); } catch (_) {}
   };
 
   // Helper to build MindAR base config for current state or overridden step
   const buildBaseCfg = (stepOverride = null) => {
+    const defaultMind = MIND_SOURCES.trio || './assets/targets/trio.mind';
     const baseCfg = {
-      imageTargetSrc: './assets/targets/trio.mind',
+      imageTargetSrc: resolveMindSrc(defaultMind, 'trio'),
       maxTrack: 3,
       showStats: false,
       uiLoading: 'no',
@@ -1806,11 +2129,14 @@ export function createARController({
     if (simpleWolfOnly || state.mode === 'heroes' || state.mode === 'quest') {
       baseCfg.maxTrack = 1;
       if (state.mode === 'heroes' && state.hero?.mind) {
-        baseCfg.imageTargetSrc = (state.hero.key === 'wolf') ? WOLF_MIND : state.hero.mind;
+        baseCfg.imageTargetSrc = resolveMindSrc(state.hero.mind, state.hero.key);
       } else if (state.mode === 'quest') {
         const step = stepOverride || (quest.getStep ? quest.getStep() : 'intro');
         const stepKey = step === 'intro' ? 'wolf' : step;
-        baseCfg.imageTargetSrc = (stepKey === 'wolf') ? WOLF_MIND : quest.getMindForStep(step);
+        const stepMindPath = quest.getMindForStep(step);
+        baseCfg.imageTargetSrc = resolveMindSrc(stepMindPath, stepKey);
+      } else {
+        baseCfg.imageTargetSrc = resolveMindSrc(MIND_SOURCES.wolf, 'wolf');
       }
     }
     return baseCfg;
@@ -1847,6 +2173,10 @@ export function createARController({
     if (state.mode !== 'quest') return;
     trioModeActive = false;
     try {
+      // Ensure we are back in single-target configuration (after trio mode re-enables extra anchors)
+      enableOnlyGenericAnchor();
+      // Reset special click handling from the Cheburashka stand
+      disableStandClickMode();
       ui.setTrackingState && ui.setTrackingState('loading');
       try { ui.setInteractionHint('Готовим сцену…'); } catch (_) {}
       // Prepare content for the new step (generic anchor scene)
@@ -1857,16 +2187,16 @@ export function createARController({
       // Update helper texts
       try {
         if (nextStep === 'gena') {
-          ui.setInteractionHint('Наведись на: Крокодил Гена');
-          guide.showSubtitles('Наведи камеру на Гену!');
+          applyQuestScanHint(nextStep);
+          guide.showSubtitles('Гена где-то рядом — найди его статую в кадре!');
           guide.dockToCorner('tl');
         } else if (nextStep === 'cheburashka') {
-          ui.setInteractionHint('Наведись на: Чебурашка');
-          guide.showSubtitles('Наведи камеру на Чебурашку!');
+          applyQuestScanHint(nextStep);
+          guide.showSubtitles('Чебурашка прячется за апельсинами. Наведи на него камеру!');
           guide.dockToCorner('tl');
         } else if (nextStep === 'cheburashkastand') {
           // Стартовая подсказка для стенда Чебурашек
-          ui.setInteractionHint('Наведись на: Чебурашки');
+          applyQuestScanHint(nextStep);
           try {
             if (!quest.isPlayed || !quest.isPlayed('cheburashkastand_intro')) {
               await guide.speak('Наведись на чебурашек! Получи приз!', { ctaNow: true });
@@ -1874,10 +2204,16 @@ export function createARController({
             }
           } catch(_) {}
         } else if (nextStep === 'shapoklyak') {
-          ui.setInteractionHint('Наведись на: Шапокляк');
+          applyQuestScanHint(nextStep);
           // Скрываем 3D‑гида до момента фото
           try { guide.setState('hidden'); } catch(_) {}
-          guide.showSubtitles('Наведи камеру на Шапокляк!');
+          guide.showSubtitles('Шапокляк уже в пути — держи её статую в кадре!');
+        } else if (nextStep === 'intro' || nextStep === 'wolf') {
+          applyQuestScanHint(nextStep);
+          try { guide.setState('talk'); } catch(_) {}
+          guide.showSubtitles('Волк с Зайцем где-то рядом. Совмести рамку с их скульптурой!');
+        } else {
+          applyQuestScanHint(nextStep);
         }
       } catch (_) {}
     } catch (e) {
@@ -1897,8 +2233,9 @@ export function createARController({
         await ensureAssetsForStep('trio');
         while (root.firstChild) root.removeChild(root.firstChild);
       }
+      const trioMindPath = MIND_SOURCES.trio || './assets/targets/trio.mind';
       const cfg = {
-        imageTargetSrc: './assets/targets/trio.mind',
+        imageTargetSrc: resolveMindSrc(trioMindPath, 'trio'),
         maxTrack: 3,
         showStats: false,
         uiLoading: 'no',
@@ -1914,7 +2251,7 @@ export function createARController({
       // Build the requested static scenic layout for trio
       try { buildTrioScenery(root); } catch(_) {}
       ui.setTrackingState('lost_trio');
-      ui.setInteractionHint('Совместите рамку с трио гены, чебурашки и шапокляк');
+      applyQuestScanHint('trio');
       try {
         // Яркий CTA для режима trio
         guide.setCTA('Сфоткайся вместе со всеми! Не забудь улыбнуться!');
@@ -1941,6 +2278,7 @@ export function createARController({
     stopGenaMusic: () => { try { stopGenaAudio(); const root = document.getElementById('scene-generic'); root && root.emit('gena-music-stop'); } catch (_) {} },
     switchQuestStep,
     switchToTrio,
+    disableStandClick: disableStandClickMode,
     // Special: Shapoklyak photo reaction — mouse runs away and hides
     shapoklyakOnPhoto: async () => {
       try {

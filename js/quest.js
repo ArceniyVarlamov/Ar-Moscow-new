@@ -18,11 +18,13 @@ const STEP_MIND_MAP = {
 };
 
 const STEP_LABEL_MAP = {
+  intro: 'Волк',
   wolf: 'Волк',
   gena: 'Крокодил Гена',
   shapoklyak: 'Шапокляк',
   cheburashka: 'Чебурашка',
   cheburashkastand: 'Чебурашки',
+  trio: 'Трио',
 };
 
 export function mindForHeroKey(key) {

@@ -48,10 +48,23 @@
       </div>
     </div>
 
+    <div id="camera-permission" class="panel hidden">
+      <div class="panel__content">
+        <h2 id="camera-permission-title">Включи камеру</h2>
+        <p id="camera-permission-text">Разреши доступ к камере, чтобы увидеть сцену с Волком.</p>
+        <p id="camera-permission-error" class="panel__error hidden"></p>
+        <div class="camera-permission__actions">
+          <button id="camera-permission-allow" class="cta">Разрешить камеру</button>
+          <button id="camera-permission-cancel" class="cta cta--ghost">Назад</button>
+        </div>
+      </div>
+    </div>
+
   <div id="ar-wrapper" class="hidden">
       <div id="ar-overlay">
+        <button id="back-to-main" class="overlay-home cta cta--ghost">На главную</button>
         <div class="status" id="tracking-status">Ищем скульптуру…</div>
-        <div class="hint" id="interaction-hint">Совместите рамку с изображением персонажа.</div>
+        <div class="hint" id="interaction-hint">Совмести рамку с изображением персонажа.</div>
         <div class="capture-controls">
           <button id="skip-next" class="cta cta--ghost" style="margin-right: 10px">Следующий герой →</button>
           <button id="camera-toggle" class="cta cta--ghost" style="margin-right: 10px">Камера: задняя</button>
@@ -102,6 +115,14 @@
         <p>
           Чтобы оживить персонажей, разрешите использование камеры в браузере и обновите страницу.
         </p>
+      </div>
+    </div>
+
+    <div id="scene-loader" class="scene-loader hidden" role="status">
+      <div class="scene-loader__backdrop" aria-hidden="true"></div>
+      <div class="scene-loader__content">
+        <div class="spinner" aria-hidden="true"></div>
+        <div id="scene-loader-text" class="scene-loader__text">Загружаем сцену…</div>
       </div>
     </div>
   </body>

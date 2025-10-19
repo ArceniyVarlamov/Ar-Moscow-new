@@ -5,9 +5,9 @@ import { loadSceneConfig, applySceneConfig } from './js/scenes.js';
 import { createARController } from './js/ar.js';
 import { compositeSnapshot } from './js/snapshot.js';
 import { createAssetPreloader } from './js/preloader.js';
- 
 
 const SIMPLE_WOLF_ONLY = true;
+const SILENT_AUDIO_SRC = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
 
 // Global diagnostics for unhandled Promise rejections (to pinpoint GLTF loader issues)
 try {
@@ -45,6 +45,30 @@ const state = {
   hero: null, // { key, title, mind }
 };
 
+const HERO_TARGET_ACCUSATIVE = {
+  cheburashka: 'Чебурашку',
+  gena: 'Крокодила Гену',
+  wolf: 'Волка',
+  shepoklak: 'Шапокляк',
+  souzmultipark: 'кучу Чебурашек',
+  trio: 'трио героев',
+};
+
+const HERO_DISPLAY_NAMES = {
+  cheburashka: 'Чебурашка',
+  gena: 'Крокодил Гена',
+  wolf: 'Волк',
+  shepoklak: 'Шапокляк',
+  souzmultipark: 'Чебурашки',
+  trio: 'Трио',
+  lariska: 'Лариска',
+};
+
+const heroTargetAccusative = (key, fallback = '') => {
+  const normalized = (key || '').toString().toLowerCase();
+  return HERO_TARGET_ACCUSATIVE[normalized] || fallback;
+};
+
 function setActiveScene(key) {
   const map = { cheb: 'anchor-cheb', shap: 'anchor-shap', wolf: 'anchor-wolf' };
   const activeId = map[key];
@@ -61,43 +85,7 @@ const guide = createGuideController({ guideEl, subtitlesEl, disabled: noGuide })
 const quest = createQuestController();
 
 const assetsEl = document.querySelector('a-assets');
-const assetPreloader = createAssetPreloader({
-  assetsEl,
-  onStateChange: (state) => {
-    try {
-      // Progress for quest warmup (core + step_intro)
-      const ids = assetPreloader.groupAssetIds(['core','step_intro']);
-      const status = state.statusById || {};
-      const total = ids.length || 1;
-      const loaded = ids.filter((id)=> status[id] === 'loaded').length;
-      if (loaded < total) ui.showLandingLoader(`Подготавливаем квест… ${loaded}/${total}` , true);
-      else ui.showLandingLoader('Готово! Можно начинать квест.', true);
-    } catch(_) {}
-  }
-});
-// Warm critical bundles for quest start
-const coreReady = assetPreloader.ensureCore();
-const questWarmup = assetPreloader.ensureForStep('intro');
-Promise.all([coreReady, questWarmup]).then(() => {
-  ui.setStartQuestEnabled(true);
-  ui.showLandingLoader('Готово! Можно начинать квест.', true);
-  try {
-    // Bind guide model only after core assets exist to avoid early glTF errors
-    guideEl?.setAttribute('gltf-smart', '#lariskaModel');
-  } catch(_) {}
-  assetPreloader.warmupGroups([
-    'step_gena',
-    'step_cheburashka',
-    'step_shapoklyak',
-    'step_cheburashkastand',
-    'step_trio',
-    'voice_mouse',
-  ]);
-}).catch((error) => {
-  console.warn('[Preloader] core warmup failed', error);
-  ui.setStartQuestEnabled(false);
-  ui.showLandingLoader('Не удалось подготовить квест. Обновите страницу.', true);
-});
+const assetPreloader = createAssetPreloader({ assetsEl });
 
 const ui = initUI({
   onStartQuest: handleStartQuest,
@@ -107,13 +95,47 @@ const ui = initUI({
   onCameraToggle: handleCameraToggle,
   onCapture: handleCapture,
   onSkipNext: handleSkipNext,
+  onCameraPermissionConfirm: handleCameraPermissionConfirm,
+  onCameraPermissionCancel: handleCameraPermissionCancel,
 });
 
-// Disable quest start until warmup completes; show loader
+try { ui.setSkipVisible(false); } catch (_) {}
+
+// Show warmup loader, but keep the Start button clickable.
 try {
-  ui.setStartQuestEnabled(false);
+  ui.setStartQuestEnabled(true);
   ui.showLandingLoader('Подготавливаем квест…', true);
 } catch(_) {}
+
+let coreAssetsReady = false;
+let pendingCameraLaunch = null;
+let pendingCameraContext = null;
+
+const clearPendingCameraRequest = () => {
+  pendingCameraLaunch = null;
+  pendingCameraContext = null;
+};
+assetPreloader.waitForGroups(['core'], {
+  onProgress: (summary) => {
+    const total = summary.total || 1;
+    const message = summary.ready
+      ? 'Готово! Можно начинать квест.'
+      : `Подготавливаем старт… ${summary.loaded}/${total}`;
+    ui.showLandingLoader(message, true);
+  },
+}).then(() => {
+  coreAssetsReady = true;
+  ui.setStartQuestEnabled(true);
+  try {
+    guideEl?.setAttribute('gltf-smart', '#lariskaModel');
+  } catch (_) {}
+}).catch((error) => {
+  console.warn('[Preloader] core warmup failed', error);
+  coreAssetsReady = false;
+  // Keep Start enabled; handleStartQuest will wait for core and surface errors.
+  ui.setStartQuestEnabled(true);
+  ui.showLandingLoader('Не удалось подготовить квест. Обновите страницу.', true);
+});
 
 const arController = createARController({
   sceneEl,
@@ -136,48 +158,242 @@ loadSceneConfig().then((cfg) => {
   if (cfg) arController.setSceneConfig(cfg);
 });
 
+const QUEST_STEP_SEQUENCE = ['intro', 'gena', 'cheburashka', 'shapoklyak', 'trio', 'cheburashkastand'];
+const stepPrefetchCache = new Map();
+
+const normalizeStep = (step = 'intro') => {
+  if (step === 'wolf') return 'intro';
+  return step || 'intro';
+};
+
+const stepGroups = (step) => {
+  const normalized = normalizeStep(step);
+  const groups = normalized === 'intro' ? ['core'] : [];
+  const groupKey = normalized === 'intro' ? 'step_intro' : `step_${normalized}`;
+  if (assetPreloader.groupAssetIds([groupKey]).length > 0) {
+    groups.push(groupKey);
+  }
+  return groups;
+};
+
+const getStepDisplayName = (step) => {
+  const normalized = normalizeStep(step);
+  if (quest && typeof quest.getDisplayName === 'function') {
+    const labelKey = normalized === 'intro' ? 'intro' : normalized;
+    return quest.getDisplayName(labelKey);
+  }
+  return normalized;
+};
+
+const formatSceneLoaderText = (step, summary) => {
+  const name = getStepDisplayName(step) || 'сцену';
+  if (!summary || summary.total === 0) {
+    return `Загружаем сцену «${name}»…`;
+  }
+  const percent = Math.min(100, Math.round(summary.progress * 100));
+  return `Загружаем сцену «${name}»… ${summary.loaded}/${summary.total} (${percent}%)`;
+};
+
+const heroGroupsForKey = (heroKey) => {
+  const groups = ['core'];
+  const normalized = (heroKey || '').toString().trim();
+  if (normalized) groups.push(`hero_${normalized}`);
+  return groups;
+};
+
+const heroDisplayName = (heroKey, title) => {
+  const label = typeof title === 'string' ? title.trim() : '';
+  if (label) return label;
+  const normalized = (heroKey || '').toString().toLowerCase();
+  if (!normalized) return 'героя';
+  return HERO_DISPLAY_NAMES[normalized]
+    || quest?.getDisplayName?.(normalized)
+    || normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+const formatHeroLoaderText = (heroKey, title, summary = null) => {
+  const name = heroDisplayName(heroKey, title);
+  if (!summary || summary.total === 0) {
+    return `Готовим сцену «${name}»…`;
+  }
+  const percent = Math.min(100, Math.round((summary.progress || 0) * 100));
+  return `Готовим сцену «${name}»… ${summary.loaded}/${summary.total} (${percent}%)`;
+};
+
+const ensureHeroAssetsWithLoader = async (heroKey, title) => {
+  const groups = heroGroupsForKey(heroKey);
+  const alreadyLoaded = assetPreloader.areGroupsLoaded(groups);
+  ui.showSceneLoader(formatHeroLoaderText(heroKey, title));
+  try {
+    const summary = await assetPreloader.waitForGroups(groups, {
+      autoStart: !alreadyLoaded,
+      onProgress: (progress) => {
+        ui.updateSceneLoader(formatHeroLoaderText(heroKey, title, progress));
+      },
+    });
+    ui.updateSceneLoader(formatHeroLoaderText(heroKey, title, summary));
+    return summary;
+  } catch (error) {
+    throw error;
+  } finally {
+    ui.hideSceneLoader();
+  }
+};
+
+const getNextQuestStep = (step) => {
+  const normalized = normalizeStep(step);
+  const idx = QUEST_STEP_SEQUENCE.indexOf(normalized);
+  if (idx === -1) return null;
+  return QUEST_STEP_SEQUENCE[idx + 1] || null;
+};
+
+const ensureStepAssetsWithLoader = async (step) => {
+  const groups = stepGroups(step);
+  const alreadyLoaded = assetPreloader.areGroupsLoaded(groups);
+  ui.showSceneLoader(formatSceneLoaderText(step));
+  try {
+    const summary = await assetPreloader.waitForGroups(groups, {
+      autoStart: !alreadyLoaded,
+      onProgress: (progress) => {
+        ui.updateSceneLoader(formatSceneLoaderText(step, progress));
+      },
+    });
+    ui.updateSceneLoader(formatSceneLoaderText(step, summary));
+    return summary;
+  } catch (error) {
+    throw error;
+  } finally {
+    ui.hideSceneLoader();
+  }
+};
+
+const prefetchStepAssets = (step) => {
+  const normalized = normalizeStep(step);
+  if (!normalized) return;
+  const groups = stepGroups(normalized);
+  if (groups.length === 0) return;
+  if (assetPreloader.areGroupsLoaded(groups)) return;
+  if (stepPrefetchCache.has(normalized)) return stepPrefetchCache.get(normalized);
+  const promise = assetPreloader.ensureForStep(normalized)
+    .catch((error) => {
+      console.warn('[Preloader] prefetch failed', normalized, error);
+    })
+    .finally(() => {
+      stepPrefetchCache.delete(normalized);
+    });
+  stepPrefetchCache.set(normalized, promise);
+  return promise;
+};
+
+const prefetchNextQuestStep = (currentStep) => {
+  const next = getNextQuestStep(currentStep);
+  if (!next) return;
+  prefetchStepAssets(next);
+};
+
+const transitionToQuestStep = async (nextStep) => {
+  const normalized = normalizeStep(nextStep);
+  await ensureStepAssetsWithLoader(normalized);
+  await arController.switchQuestStep(normalized === 'intro' ? 'intro' : normalized);
+  prefetchNextQuestStep(normalized);
+};
+
+const transitionToTrio = async () => {
+  const targetStep = 'trio';
+  await ensureStepAssetsWithLoader(targetStep);
+  await arController.switchToTrio?.();
+  prefetchNextQuestStep(targetStep);
+};
+
 async function handleStartQuest() {
+  const unlockAttempt = unlockAudioPlayback().catch(() => {});
   state.mode = 'quest';
   state.hero = null;
   quest.reset();
+  try { ui.setSkipVisible(true); } catch (_) {}
+  try { arController.disableStandClick && arController.disableStandClick(); } catch (_) {}
+  clearPendingCameraRequest();
+  ui.hideCameraPrompt();
   ui.hideUnsupported();
   guide.setState('hidden');
   guide.clearCTA();
   guide.clearSubtitles();
-  ui.setInteractionHint('Готовим сцену…');
-  const step = quest.getStep ? quest.getStep() : 'intro';
+
+  const step = normalizeStep(quest.getStep ? quest.getStep() : 'intro');
+
+  if (!coreAssetsReady) {
+    try {
+      await assetPreloader.waitForGroups(['core']);
+      coreAssetsReady = assetPreloader.areGroupsLoaded(['core']);
+    } catch (error) {
+      console.error('[Preloader] core assets unavailable', error);
+      ui.showLanding();
+      ui.hideHeroes();
+      ui.showLandingLoader('Не удалось подготовить квест. Обновите страницу.', true);
+      guide.setState('hidden');
+      guide.clearSubtitles();
+      guide.clearCTA();
+      state.mode = null;
+      quest.reset();
+      return;
+    }
+  }
+
+  // Keep landing visible during preload to avoid a blank screen on slow networks
+
   try {
-    await assetPreloader.ensureForStep(step || 'intro');
+    await ensureStepAssetsWithLoader(step || 'intro');
   } catch (error) {
     console.error('[Preloader] quest intro load failed', error);
     state.mode = null;
     quest.reset();
+    ui.hideSceneLoader();
     ui.showLanding();
     ui.hideHeroes();
-    ui.setInteractionHint('Не удалось загрузить сцену. Попробуйте ещё раз.');
+    ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
     guide.setState('hidden');
     guide.clearSubtitles();
     guide.clearCTA();
     return;
   }
-  try { await unlockAudioPlayback(); } catch(_) {}
-  ui.setInteractionHint('Иди по подсказкам и наводи камеру на таблички у статуй.');
-  ui.hideLanding();
+  try { await unlockAttempt; } catch(_) {}
+  ui.setInteractionHint('Разреши доступ к камере, чтобы продолжить квест.');
+
+  pendingCameraContext = { mode: 'quest', step };
+  pendingCameraLaunch = async () => {
+    await arController.start();
+    ui.setInteractionHint('Найди скульптуру Волка с Зайцем и наведи на неё рамку — Лариска подскажет, что делать дальше!');
+    prefetchNextQuestStep(step || 'intro');
+  };
+  ui.hideSceneLoader();
+  ui.showCameraPrompt({
+    title: 'Включи камеру',
+    message: 'Разреши доступ к камере, чтобы увидеть сцену с Волком.',
+    allowLabel: 'Разрешить камеру',
+  });
+  // Hide background panels after the prompt is visible
   ui.hideHeroes();
-  // Запрашиваем доступ к камере повторно по нажатию кнопки "Квест"
-  try { if (arController.reRequestCameraPermission) await arController.reRequestCameraPermission(); } catch(_) {}
-  await arController.start();
+  ui.hideLanding();
+  try {
+    document.getElementById('camera-permission')?.scrollIntoView({ block: 'center' });
+    document.getElementById('camera-permission-allow')?.focus?.();
+  } catch (_) {}
 }
 
 function handleStartHeroes() {
   state.mode = 'heroes';
   state.hero = null;
   quest.reset();
+  try { ui.setSkipVisible(false); } catch (_) {}
+  try { arController.disableStandClick && arController.disableStandClick(); } catch (_) {}
+  clearPendingCameraRequest();
+  ui.hideCameraPrompt();
   ui.hideLanding();
   ui.showHeroes();
   guide.setState('hidden');
   guide.clearSubtitles();
   guide.clearCTA();
+  ui.hideSceneLoader();
   // Камеру не запрашиваем здесь; запросим при выборе конкретного героя (старт сцены)
 }
 
@@ -185,6 +401,10 @@ function handleBackToLanding() {
   state.mode = null;
   state.hero = null;
   quest.reset();
+  try { ui.setSkipVisible(false); } catch (_) {}
+  try { arController.disableStandClick && arController.disableStandClick(); } catch (_) {}
+  ui.hideCameraPrompt();
+  clearPendingCameraRequest();
   ui.showLanding();
   ui.hideHeroes();
   ui.exitARMode();
@@ -193,64 +413,182 @@ function handleBackToLanding() {
   guide.clearSubtitles();
   guide.clearCTA();
   arController.stopSelfie();
+  ui.hideSceneLoader();
   
 }
 
 // Attempt to unlock audio playback on first user gesture (iOS/Chrome autoplay policies)
 async function unlockAudioPlayback() {
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-      try {
+  if (window.__AUDIO_UNLOCKED) {
+    return window.__AUDIO_UNLOCK_PROMISE || Promise.resolve();
+  }
+  if (window.__AUDIO_UNLOCK_PROMISE) {
+    return window.__AUDIO_UNLOCK_PROMISE;
+  }
+
+  const run = async () => {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
         if (!window.__UNLOCK_AC) window.__UNLOCK_AC = new AC();
-        if (window.__UNLOCK_AC?.state === 'suspended') await window.__UNLOCK_AC.resume();
-      } catch(_) {}
-    }
-  } catch(_) {}
-  try {
-    const audios = Array.from(document.querySelectorAll('a-assets audio'));
-    for (const a of audios) {
-      const prevMuted = a.muted;
-      const prevVol = a.volume;
-      a.muted = true; a.volume = 0.0;
-      try { await a.play(); } catch(_) {}
-      try { a.pause(); a.currentTime = 0; } catch(_) {}
-      a.muted = prevMuted; a.volume = prevVol;
-    }
-  } catch(_) {}
+        const ctx = window.__UNLOCK_AC;
+        if (ctx && typeof ctx.resume === 'function' && ctx.state === 'suspended') {
+          try { await ctx.resume(); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const audios = Array.from(document.querySelectorAll('a-assets audio'));
+      for (const audioEl of audios) {
+        try { audioEl.load?.(); } catch (_) {}
+      }
+    } catch (_) {}
+
+    try {
+      const registry = window.__AUDIO_UNLOCK_SILENT || {};
+      window.__AUDIO_UNLOCK_SILENT = registry;
+      let silent = registry.el;
+      if (!silent) {
+        silent = new Audio();
+        silent.preload = 'auto';
+        silent.crossOrigin = 'anonymous';
+        silent.src = SILENT_AUDIO_SRC;
+        registry.el = silent;
+      }
+      silent.muted = true;
+      silent.volume = 0;
+      // Safari can leave the play() promise pending until visibility changes, so avoid awaiting here.
+      const result = silent.play();
+      if (result && typeof result.then === 'function') {
+        result.catch(() => {});
+      }
+      try { silent.pause(); } catch (_) {}
+      try { silent.currentTime = 0; } catch (_) {}
+    } catch (_) {}
+  };
+
+  window.__AUDIO_UNLOCK_PROMISE = run()
+    .catch((error) => {
+      console.warn('[Audio] unlockAudioPlayback failed', error);
+    })
+    .finally(() => {
+      window.__AUDIO_UNLOCKED = true;
+    });
+
+  return window.__AUDIO_UNLOCK_PROMISE;
 }
 
 async function handleHeroSelect({ key, title }) {
+  const unlockAttempt = unlockAudioPlayback().catch(() => {});
   // Use canonical mapping for new targets
   const mind = mindForHeroKey(key);
   state.mode = 'heroes';
   state.hero = { key, title, mind };
+  const targetLabel = heroTargetAccusative(key, title);
+  try { ui.setSkipVisible(false); } catch (_) {}
+  clearPendingCameraRequest();
+  ui.hideCameraPrompt();
   ui.hideUnsupported();
   ui.setInteractionHint('Готовим героя…');
+
   try {
-    await assetPreloader.ensureForHero(key);
+    await ensureHeroAssetsWithLoader(key, title);
   } catch (error) {
     console.error('[Preloader] hero load failed', key, error);
     state.hero = null;
     ui.showHeroes();
     ui.hideLanding();
-    ui.setInteractionHint('Не удалось загрузить героя. Попробуйте выбрать ещё раз.');
+    ui.setInteractionHint('Не удалось загрузить героя. Попробуй выбрать ещё раз.');
     guide.setState('hidden');
     guide.clearSubtitles();
     guide.clearCTA();
     return;
   }
-  try { await unlockAudioPlayback(); } catch(_) {}
-  ui.hideHeroes();
-  ui.hideLanding();
-  ui.setInteractionHint(`Наведись на: ${title}`);
+  try { await unlockAttempt; } catch(_) {}
+  // Keep selection screen visible until the permission prompt is shown
+  ui.setInteractionHint('Разреши доступ к камере, чтобы увидеть героя.');
   guide.setState('hidden');
   guide.clearSubtitles();
   guide.clearCTA();
-  // Повторно запрашиваем доступ к камере при выборе конкретного персонажа
-  try { if (arController.reRequestCameraPermission) await arController.reRequestCameraPermission(); } catch(_) {}
-  await arController.start();
-  
+  pendingCameraContext = { mode: 'heroes', heroKey: key, title };
+  pendingCameraLaunch = async () => {
+    await arController.start();
+    ui.setInteractionHint(`Наведись на ${targetLabel || title}!`);
+  };
+  ui.hideSceneLoader();
+  ui.showCameraPrompt({
+    title: 'Включи камеру',
+    message: `Разреши доступ к камере, чтобы увидеть ${targetLabel || title}.`,
+    allowLabel: 'Разрешить камеру',
+  });
+  ui.hideHeroes();
+  ui.hideLanding();
+  try {
+    document.getElementById('camera-permission')?.scrollIntoView({ block: 'center' });
+    document.getElementById('camera-permission-allow')?.focus?.();
+  } catch (_) {}
+}
+
+async function handleCameraPermissionConfirm() {
+  if (!pendingCameraLaunch) {
+    ui.hideCameraPrompt();
+    return;
+  }
+  ui.setCameraPromptBusy(true);
+  ui.setCameraPromptError('');
+  try {
+    try { await unlockAudioPlayback(); } catch (error) { console.warn('[AR] unlockAudioPlayback before camera access failed', error); }
+    if (typeof arController.reRequestCameraPermission === 'function') {
+      await arController.reRequestCameraPermission();
+    }
+  } catch (error) {
+    console.warn('[AR] camera permission denied or failed', error);
+    ui.setCameraPromptBusy(false);
+    ui.setCameraPromptError('Нужно разрешить использование камеры. Проверьте настройки браузера и попробуйте снова.');
+    return;
+  }
+
+  const launch = pendingCameraLaunch;
+  clearPendingCameraRequest();
+  ui.hideCameraPrompt();
+  try {
+    await launch?.();
+  } catch (error) {
+    console.error('[AR] failed to launch AR after camera permission', error);
+    ui.exitARMode();
+    ui.showUnsupported();
+    guide.setState('hidden');
+    guide.clearSubtitles();
+    guide.clearCTA();
+  }
+}
+
+function handleCameraPermissionCancel() {
+  ui.hideCameraPrompt();
+  if (!pendingCameraContext) {
+    clearPendingCameraRequest();
+    return;
+  }
+  const context = pendingCameraContext;
+  clearPendingCameraRequest();
+  if (context.mode === 'quest') {
+    state.mode = null;
+    state.hero = null;
+    quest.reset();
+    ui.showLanding();
+    ui.hideHeroes();
+    ui.setInteractionHint('Совмести рамку с изображением персонажа.');
+  } else if (context.mode === 'heroes') {
+    state.mode = 'heroes';
+    state.hero = null;
+    ui.hideLanding();
+    ui.showHeroes();
+    ui.setInteractionHint('Выбери героя и затем разреши доступ к камере.');
+  }
+  guide.setState('hidden');
+  guide.clearSubtitles();
+  guide.clearCTA();
 }
 
 function handleCameraToggle() {
@@ -304,7 +642,11 @@ async function handleCapture() {
 
       // 4. Переключаемся на таргет Гены (gena.mind)
       quest.setStep('gena');
-      try { await arController.switchQuestStep('gena'); } catch (e) { console.warn('[AR] step switch to Gena failed', e); }
+      try { await transitionToQuestStep('gena'); }
+      catch (e) {
+        console.warn('[AR] step switch to Gena failed', e);
+        ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
+      }
       // 5. Музыка включится автоматически при наведении (targetFound @ step=gena)
     } else if (isQuest && step === 'gena') {
       // Остановить музыку Гены при фото
@@ -316,7 +658,11 @@ async function handleCapture() {
       guide.showSubtitles('Наведи камеру на Чебурашку!');
       // Убираем таргет Гены и переключаемся на Чебурашку (cheburashka.mind)
       quest.setStep('cheburashka');
-      try { await arController.switchQuestStep('cheburashka'); } catch (e) { console.warn('[AR] step switch to Cheburashka failed', e); }
+      try { await transitionToQuestStep('cheburashka'); }
+      catch (e) {
+        console.warn('[AR] step switch to Cheburashka failed', e);
+        ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
+      }
     } else if (isQuest && step === 'cheburashka') {
       // После фото с Чебурашкой: через секунду мышка всплывает, говорит фразу, затем уменьшается и переключаем таргет на Шапокляк
       await new Promise((r)=> setTimeout(r, 1000));
@@ -324,7 +670,11 @@ async function handleCapture() {
       // После speak мышка автоматически уходит в угол (уменьшается)
       // Переключаемся на этап Шапокляк
       quest.setStep('shapoklyak');
-      try { await arController.switchQuestStep('shapoklyak'); } catch (e) { console.warn('[AR] step switch to Shapoklyak failed', e); }
+      try { await transitionToQuestStep('shapoklyak'); }
+      catch (e) {
+        console.warn('[AR] step switch to Shapoklyak failed', e);
+        ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
+      }
       // face tracking removed
     } else if (isQuest && step === 'shapoklyak' && !isTrio) {
       // Фото на Шапокляк: мышка убегает, гид говорит фразу и переводим на трио
@@ -332,7 +682,11 @@ async function handleCapture() {
       try {
         await guide.speak('Ах! Не получилось съесть сыр! Ну ничего! Давай сфоткаемся со всеми и потом пойдём в парк!', { dock: false });
       } catch (_) {}
-      try { arController.switchToTrio && await arController.switchToTrio(); } catch(_) {}
+      try { await transitionToTrio(); }
+      catch (e) {
+        console.warn('[AR] switch to trio failed', e);
+        ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
+      }
       // Зафиксируем состояние трио в квесте, чтобы на следующем кадре не повторять фразу Шапокляк
       quest.setStep('trio');
     } else if (isQuest && isTrio) {
@@ -342,7 +696,11 @@ async function handleCapture() {
       } catch(_) {}
       // Переключаем таргет на cheburashkastand.mind
       quest.setStep('cheburashkastand');
-      try { await arController.switchQuestStep('cheburashkastand'); } catch (e) { console.warn('[AR] switch to cheburashkastand failed', e); }
+      try { await transitionToQuestStep('cheburashkastand'); }
+      catch (e) {
+        console.warn('[AR] switch to cheburashkastand failed', e);
+        ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
+      }
       // Стартовая подсказка для стенда озвучивается внутри switchQuestStep (ar.js) и не дублируется здесь
     }
 
@@ -358,11 +716,11 @@ async function handleCapture() {
   }
 }
 
-function handleSkipNext() {
+async function handleSkipNext() {
   if (state.mode !== 'quest') return;
-  const step = quest.getStep();
+  const step = normalizeStep(quest.getStep());
   let next = null;
-  if (step === 'intro' || step === 'wolf') next = 'gena';
+  if (step === 'intro') next = 'gena';
   else if (step === 'gena') next = 'cheburashka';
   else if (step === 'cheburashka') next = 'shapoklyak';
   else if (step === 'shapoklyak') next = 'trio';
@@ -375,7 +733,11 @@ function handleSkipNext() {
   if (next === 'trio') {
     // Переход с Шапокляк на трио
     quest.setStep('trio');
-    arController.switchToTrio?.().catch((e)=> console.warn('[AR] skip switch to trio failed', e));
+    try { await transitionToTrio(); }
+    catch (e) {
+      console.warn('[AR] skip switch to trio failed', e);
+      ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
+    }
     // Яркий CTA/сабтайтлы выставятся внутри switchToTrio
     return;
   }
@@ -384,7 +746,11 @@ function handleSkipNext() {
   guide.dockToCorner('tl');
   guide.showSubtitles(next === 'gena' ? 'Наведи камеру на Гену!' : next === 'cheburashka' ? 'Наведи камеру на Чебурашку!' : next === 'cheburashkastand' ? 'Наведись на чебурашек! Получи приз!' : 'Наведи камеру на Шапокляк!');
   quest.setStep(next);
-  arController.switchQuestStep(next).catch((e)=> console.warn('[AR] skip switch failed', e));
+  try { await transitionToQuestStep(next); }
+  catch (e) {
+    console.warn('[AR] skip switch failed', e);
+    ui.setInteractionHint('Не удалось загрузить сцену. Попробуй ещё раз.');
+  }
   // face tracking removed
 }
 

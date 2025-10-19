@@ -509,7 +509,7 @@
       enabled: { type: 'boolean', default: true },
       count: { type: 'int', default: 6 },
       baseY: { type: 'number', default: 0.02 },
-      size: { type: 'number', default: 0.20 }, // увеличили в 2 раза
+      size: { type: 'number', default: 6.0 },
       // Параметры траектории
       // случайные задержки между появлениями
       spawnDelayMin: { type: 'number', default: 0.90 },
@@ -531,10 +531,32 @@
       this._started = false;
       this._start = this._start.bind(this);
       this._stop = this._stop.bind(this);
+      this._setNoteScale = (noteEl) => {
+        if (!noteEl) return;
+        const scale = (this.data.size !== undefined) ? this.data.size : 1;
+        try {
+          if (noteEl.object3D?.scale) noteEl.object3D.scale.setScalar(scale);
+        } catch (_) {}
+        noteEl.setAttribute('scale', `${scale} ${scale} ${scale}`);
+      };
       this.el.addEventListener('gena-music-start', this._start);
       this.el.addEventListener('gena-music-stop', this._stop);
       this._build();
       this._stop();
+    },
+    update: function(oldData){
+      if (!oldData || !this._notes) return;
+      if ('size' in oldData && oldData.size !== this.data.size) {
+        this._notes.forEach((entry)=>{
+          if (!entry?.el) return;
+          const once = () => {
+            entry.el.removeEventListener('model-loaded', once);
+            this._setNoteScale(entry.el);
+          };
+          this._setNoteScale(entry.el);
+          entry.el.addEventListener('model-loaded', once, { once: true });
+        });
+      }
     },
     remove: function(){
       this.el.removeEventListener('gena-music-start', this._start);
@@ -545,25 +567,18 @@
       const n = Math.max(4, cfg.count|0);
       for (let i=0;i<n;i++){
         const note = document.createElement('a-entity');
-      note.setAttribute('gltf-smart', '#noteModel');
+        note.setAttribute('gltf-smart', '#noteModel');
         note.setAttribute('rotation', '0 90 0');
         // плавное вращение вокруг своей оси
         const spinDur = Math.floor(cfg.spinDurMin + Math.random()*Math.max(1,(cfg.spinDurMax - cfg.spinDurMin)));
         note.setAttribute('animation__spin', `property: rotation; to: 0 450 0; loop: true; easing: linear; dur: ${spinDur}`);
         this.el.appendChild(note);
-
-        const onLoad = ()=>{
-          try {
-            const obj = note.getObject3D('mesh');
-            if (!obj) return;
-            const box = new AFRAME.THREE.Box3().setFromObject(obj);
-            const size = new AFRAME.THREE.Vector3();
-            box.getSize(size);
-            const k = (cfg.size || 0.10) / (Math.max(size.x,size.y,size.z) || 1);
-            if (isFinite(k) && k>0 && k<1000) obj.scale.multiplyScalar(k);
-          } catch(_){}
+        this._setNoteScale(note);
+        const once = () => {
+          note.removeEventListener('model-loaded', once);
+          this._setNoteScale(note);
         };
-        if (note.getObject3D('mesh')) onLoad(); else note.addEventListener('model-loaded', onLoad, { once: true });
+        note.addEventListener('model-loaded', once, { once: true });
 
         // Инициализация состояния одной ноты
         const rand = (a,b)=> a + Math.random()*(b-a);
@@ -590,6 +605,13 @@
       const cfg = this.data;
       try {
         this._notes.forEach((n, i)=>{
+          // Refresh scale after tracking events (mobile anchors often shrink post-load).
+          const once = () => {
+            n.el.removeEventListener('model-loaded', once);
+            this._setNoteScale(n.el);
+          };
+          this._setNoteScale(n.el);
+          n.el.addEventListener('model-loaded', once, { once: true });
           n.active = false;
           n.t = 0;
           const rand = (a,b)=> a + Math.random()*(b-a);
@@ -661,19 +683,33 @@
       outBias: { type: 'number', default: 1.0 },   // bias outward on -Z (toward scene depth)
       spinMin: { type: 'number', default: 120 },   // deg/s
       spinMax: { type: 'number', default: 480 },
+      maxPerFrame: { type: 'int', default: 6 },    // cap spawns per frame to avoid bursts (0 = unlimited)
     },
     init: function(){
       this._pool = [];
       this._active = [];
+      this._loading = new Set();
       this._acc = 0;
-      this._running = !!this.data.enabled;
-      this._start = () => { this._running = true; };
-      this._stop = () => { this._running = false; this._reclaimAll(); };
+      this._running = false;
+      this._startRequested = !!this.data.enabled;
+      this._modelReady = false;
+      this._start = () => {
+        this._startRequested = true;
+        if (this._modelReady) this._running = true;
+      };
+      this._stop = () => {
+        this._startRequested = false;
+        this._running = false;
+        this._acc = 0;
+        this._reclaimAll();
+      };
       this.el.addEventListener('effect-start', this._start);
       this.el.addEventListener('effect-stop', this._stop);
       // Container to hold stars
       this._container = document.createElement('a-entity');
       this.el.appendChild(this._container);
+      // Kick off at least one preload so the first spawn waits for a loaded mesh.
+      this._createStar();
     },
     remove: function(){
       this.el.removeEventListener('effect-start', this._start);
@@ -685,8 +721,17 @@
       if (this._running) {
         this._acc += this.data.rate * dts;
         const n = Math.floor(this._acc);
-        if (n > 0) this._acc -= n;
-        for (let i=0;i<n;i++) this._spawnOne();
+        if (n > 0) {
+          this._acc -= n;
+          let spawnBudget = n;
+          const cap = Math.max(0, this.data.maxPerFrame|0);
+          if (cap > 0) {
+            spawnBudget = Math.min(spawnBudget, cap);
+            const spill = n - spawnBudget;
+            if (spill > 0) this._acc += spill;
+          }
+          for (let i=0;i<spawnBudget;i++) this._spawnOne();
+        }
       }
       // update actives
       for (let i=this._active.length-1; i>=0; i--) {
@@ -700,7 +745,8 @@
         o3d.position.z += s.vz * dts;
         s.vx *= 0.995; s.vy *= 0.995; s.vz *= 0.995; // mild damping
         s.spin += s.spinRate * dts;
-        o3d.rotation.set(0, THREE.MathUtils.degToRad(s.spin), 0);
+        const MathUtils = (AFRAME?.THREE?.MathUtils) || Math;
+        o3d.rotation.set(0, MathUtils.degToRad ? MathUtils.degToRad(s.spin) : s.spin * (Math.PI / 180), 0);
         // subtle twinkle via scale pulsation
         const tw = 1 + 0.08 * Math.sin((s.life*7) + s.seed);
         o3d.scale.setScalar(s.baseScale * tw);
@@ -716,44 +762,66 @@
       this._pool.push(s.el);
       this._active.splice(idx,1);
     },
+    _createStar: function(){
+      const el = document.createElement('a-entity');
+      const sel = (this.data.model && this.data.model.id)
+        ? ('#' + this.data.model.id)
+        : '#cuteStarModel';
+      el.setAttribute('gltf-smart', sel);
+      el.setAttribute('rotation', '0 90 0');
+      el.object3D.visible = false;
+      const onLoaded = () => {
+        el.removeEventListener('model-loaded', onLoaded);
+        this._loading.delete(el);
+        this._modelReady = true;
+        this._ensureFit(el);
+        if (!el.object3D) return;
+        el.object3D.visible = false;
+        if (!el.parentNode) this._container.appendChild(el);
+        this._pool.push(el);
+        if (this._startRequested) this._running = true;
+      };
+      el.addEventListener('model-loaded', onLoaded, { once: true });
+      this._loading.add(el);
+      this._container.appendChild(el);
+    },
+    _ensureFit: function(el){
+      try {
+        if (!el) return false;
+        if (el.object3D?.userData?._starFitApplied) return true;
+        const obj = el.getObject3D('mesh');
+        if (!obj) return false;
+        const box = new AFRAME.THREE.Box3().setFromObject(obj);
+        const size = new AFRAME.THREE.Vector3();
+        box.getSize(size);
+        const k = (this.data.size || 0.06) / (Math.max(size.x,size.y,size.z) || 1);
+        const s = Math.max(0.001, Math.min(12, k));
+        try { obj.scale.setScalar(s); } catch(_) { obj.scale.multiplyScalar(s); }
+        obj.traverse?.((n)=>{ if (n.isMesh) n.renderOrder = 10; });
+        el.object3D.userData._baseScale = s;
+        el.object3D.userData._starFitApplied = true;
+        return true;
+      } catch(_) {
+        return false;
+      }
+    },
     _spawnOne: function(){
       if (this._active.length >= Math.max(1, this.data.max|0)) return;
-      let el = this._pool.pop() || document.createElement('a-entity');
-      if (!el.hasAttribute('gltf-model') && !el.hasAttribute('gltf-smart')) {
-        const sel = (this.data.model && this.data.model.id)
-          ? ('#' + this.data.model.id)
-          : '#cuteStarModel';
-        el.setAttribute('gltf-smart', sel);
-        el.setAttribute('rotation', '0 90 0');
+      let el = this._pool.pop();
+      if (!el) {
+        // Request another star instance; will be available once model loads.
+        if (this._loading.size < Math.max(4, Math.min(this.data.max || 1, 24))) {
+          this._createStar();
+        }
+        return;
       }
-      if (!el.parentNode) this._container.appendChild(el);
+      if (!this._ensureFit(el)) {
+        // If fit failed (unlikely), park back to pool and try again later.
+        this._pool.push(el);
+        return;
+      }
       el.object3D.visible = true;
       el.object3D.position.set(0, this.data.baseY || 0, 0);
-      // Ensure high render order so stars draw over target plane
-      try {
-        const obj = el.getObject3D('mesh');
-        if (obj) obj.traverse((n)=>{ if (n.isMesh) n.renderOrder = 10; });
-      } catch(_) {}
-      // compute scale to fit target size once (lazy on first load)
-      const ensureFit = () => {
-        try {
-          const obj = el.getObject3D('mesh');
-          if (!obj) return false;
-          const box = new AFRAME.THREE.Box3().setFromObject(obj);
-          const size = new AFRAME.THREE.Vector3();
-          box.getSize(size);
-          const k = (this.data.size || 0.06) / (Math.max(size.x,size.y,size.z) || 1);
-          // Allow larger upscales for tiny models
-          const s = Math.max(0.001, Math.min(12, k));
-          obj.scale.multiplyScalar(s);
-          el.object3D.userData._baseScale = s;
-          return true;
-        } catch(_) { return false; }
-      };
-      if (!ensureFit()) {
-        const once = () => { el.removeEventListener('model-loaded', once); ensureFit(); };
-        el.addEventListener('model-loaded', once, { once: true });
-      }
 
       // random velocity, slightly biased toward -Z
       const ang = Math.random() * Math.PI * 2;

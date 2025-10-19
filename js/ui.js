@@ -8,6 +8,8 @@ export function initUI({
   onCameraToggle = noop,
   onCapture = noop,
   onSkipNext = noop,
+  onCameraPermissionConfirm = noop,
+  onCameraPermissionCancel = noop,
 } = {}) {
   const landingScreen = document.getElementById('landing-screen');
   const startQuestBtn = document.getElementById('start-quest');
@@ -23,8 +25,18 @@ export function initUI({
   const captureButton = document.getElementById('capture');
   const cameraToggle = document.getElementById('camera-toggle');
   const skipNextBtn = document.getElementById('skip-next');
+  const backToMainBtn = document.getElementById('back-to-main');
   const preloadBox = document.getElementById('preload-status');
   const preloadText = document.getElementById('preload-text');
+  const sceneLoader = document.getElementById('scene-loader');
+  const sceneLoaderText = document.getElementById('scene-loader-text');
+  const cameraPanel = document.getElementById('camera-permission');
+  const cameraTitle = document.getElementById('camera-permission-title');
+  const cameraText = document.getElementById('camera-permission-text');
+  const cameraError = document.getElementById('camera-permission-error');
+  const cameraAllowBtn = document.getElementById('camera-permission-allow');
+  const cameraCancelBtn = document.getElementById('camera-permission-cancel');
+  const defaultCameraAllowLabel = cameraAllowBtn?.textContent || 'Разрешить камеру';
 
   startQuestBtn?.addEventListener('click', () => { onStartQuest(); });
   startHeroesBtn?.addEventListener('click', () => { onStartHeroes(); });
@@ -53,6 +65,22 @@ export function initUI({
   skipNextBtn?.addEventListener('click', (event) => {
     event.preventDefault();
     onSkipNext();
+  });
+
+  backToMainBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onBackToLanding();
+  });
+
+  cameraAllowBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    onCameraPermissionConfirm();
+  });
+
+  cameraCancelBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    onCameraPermissionCancel();
   });
 
   function hide(el) { el && el.classList.add('hidden'); }
@@ -125,6 +153,53 @@ export function initUI({
     cameraToggle.textContent = text;
   }
 
+  const setCameraPromptBusy = (busy) => {
+    if (cameraAllowBtn) cameraAllowBtn.disabled = !!busy;
+  };
+
+  const setCameraPromptError = (text) => {
+    if (!cameraError) return;
+    const msg = typeof text === 'string' ? text.trim() : '';
+    cameraError.textContent = msg;
+    cameraError.classList.toggle('hidden', msg.length === 0);
+  };
+
+  const showCameraPrompt = (options = {}) => {
+    if (!cameraPanel) return;
+    const spec = typeof options === 'string' ? { message: options } : (options || {});
+    if (cameraTitle && typeof spec.title === 'string') cameraTitle.textContent = spec.title;
+    if (cameraText && typeof spec.message === 'string') cameraText.textContent = spec.message;
+    if (cameraAllowBtn) cameraAllowBtn.textContent = spec.allowLabel || defaultCameraAllowLabel;
+    setCameraPromptBusy(false);
+    setCameraPromptError(spec.error || '');
+    show(cameraPanel);
+  };
+
+  const hideCameraPrompt = () => {
+    if (!cameraPanel) return;
+    hide(cameraPanel);
+    setCameraPromptBusy(false);
+    setCameraPromptError('');
+    if (cameraAllowBtn) cameraAllowBtn.textContent = defaultCameraAllowLabel;
+  };
+
+  const showSceneLoader = (text) => {
+    if (!sceneLoader) return;
+    sceneLoader.classList.remove('hidden');
+    if (typeof text === 'string' && sceneLoaderText) sceneLoaderText.textContent = text;
+  };
+
+  const updateSceneLoader = (text) => {
+    if (!sceneLoader) return;
+    sceneLoader.classList.remove('hidden');
+    if (typeof text === 'string' && sceneLoaderText) sceneLoaderText.textContent = text;
+  };
+
+  const hideSceneLoader = () => {
+    if (!sceneLoader) return;
+    sceneLoader.classList.add('hidden');
+  };
+
   return {
     enterARMode,
     exitARMode,
@@ -152,5 +227,12 @@ export function initUI({
       if (typeof text === 'string' && preloadText) preloadText.textContent = text;
       preloadBox.classList.toggle('hidden', !visible);
     },
+    showSceneLoader,
+    updateSceneLoader,
+    hideSceneLoader,
+    showCameraPrompt,
+    hideCameraPrompt,
+    setCameraPromptBusy,
+    setCameraPromptError,
   };
 }

@@ -5,6 +5,9 @@ const animateAttr = (el, name, value, dur = 320) => {
   el.setAttribute(key, `property: ${name}; to: ${value}; dur: ${dur}; easing: easeInOutSine`);
 };
 
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const vecToString = (values) => values.map((v) => Number(v.toFixed(4))).join(' ');
+
 const estimateSpeechMs = (text) => {
   const words = (text || '').trim().split(/\s+/).filter(Boolean).length;
   const clamped = Math.max(2000, Math.min(14000, words * 2000));
@@ -27,31 +30,118 @@ export function createGuideController({ guideEl, subtitlesEl, disabled = false }
       setCTA: noop,
       clearCTA: noop,
       speak: () => resolved,
+      refreshLayout: noop,
     };
   }
+
+  const baseDistance = 1.8;
+  let currentState = 'hidden';
+  let currentCorner = 'tl';
+
+  const computeLayout = () => {
+    const widthPx = Math.max(320, window.innerWidth || window.outerWidth || 1280);
+    const heightPx = Math.max(320, window.innerHeight || window.outerHeight || 720);
+    const scene = guideEl?.sceneEl || null;
+    const camera = scene?.camera || null;
+    const fovDeg = (camera && typeof camera.fov === 'number') ? camera.fov : 75;
+    const aspect = (camera && typeof camera.aspect === 'number' && camera.aspect > 0)
+      ? camera.aspect
+      : (widthPx / Math.max(1, heightPx));
+    const distance = Math.max(0.1, Math.abs(baseDistance));
+    const fovRad = (fovDeg * Math.PI) / 180;
+    const rawVisibleHeight = 2 * distance * Math.tan(fovRad / 2);
+    const visibleHeight = (Number.isFinite(rawVisibleHeight) && rawVisibleHeight > 0) ? rawVisibleHeight : 2.4;
+    const rawVisibleWidth = visibleHeight * aspect;
+    const visibleWidth = (Number.isFinite(rawVisibleWidth) && rawVisibleWidth > 0) ? rawVisibleWidth : visibleHeight * 1.6;
+
+    const minDimPx = Math.max(320, Math.min(widthPx, heightPx));
+    const sizeRatio = clamp(minDimPx / 540, 0.5, 1.0);
+    const talkScaleVal = 0.6 * sizeRatio;
+    const miniScaleVal = Math.max(0.18, talkScaleVal * 0.5);
+
+    const halfW = visibleWidth / 2;
+    const halfH = visibleHeight / 2;
+    const marginX = visibleWidth * 0.12;
+    const marginTop = visibleHeight * 0.18;
+    const marginBottom = visibleHeight * 0.14;
+
+    const xOffset = clamp(halfW - marginX, visibleWidth * 0.12, halfW - visibleWidth * 0.04);
+    const yOffsetTop = clamp(halfH - marginTop, visibleHeight * 0.12, halfH - visibleHeight * 0.05);
+    const yOffsetBottom = clamp(halfH - marginBottom, visibleHeight * 0.10, halfH - visibleHeight * 0.04);
+
+    const talkPosition = vecToString([0, -0.05, -distance]);
+    const talkScale = vecToString([talkScaleVal, talkScaleVal, talkScaleVal]);
+    const miniPosition = talkPosition;
+    const miniScale = vecToString([miniScaleVal, miniScaleVal, miniScaleVal]);
+    const cornerScale = miniScale;
+
+    return {
+      states: {
+        talk: { position: talkPosition, scale: talkScale },
+        mini: { position: miniPosition, scale: miniScale },
+      },
+      corners: {
+        tl: { position: vecToString([-xOffset, yOffsetTop, -distance]), scale: cornerScale },
+        tr: { position: vecToString([xOffset, yOffsetTop, -distance]), scale: cornerScale },
+        bl: { position: vecToString([-xOffset, -yOffsetBottom, -distance]), scale: cornerScale },
+        br: { position: vecToString([xOffset, -yOffsetBottom, -distance]), scale: cornerScale },
+      },
+    };
+  };
+
+  const applyLayout = (opts = {}) => {
+    if (!guideEl || currentState === 'hidden') return;
+    const layout = computeLayout();
+    const duration = typeof opts.duration === 'number' ? opts.duration : 320;
+    const immediate = opts.immediate === true || duration === 0;
+    const apply = (name, value) => {
+      if (immediate) {
+        try { guideEl.setAttribute(name, value); } catch (_) {}
+      } else {
+        animateAttr(guideEl, name, value, duration);
+      }
+    };
+
+    if (currentState === 'talk') {
+      apply('scale', layout.states.talk.scale);
+      apply('position', layout.states.talk.position);
+    } else if (currentState === 'mini') {
+      apply('scale', layout.states.mini.scale);
+      apply('position', layout.states.mini.position);
+    } else if (currentState === 'corner') {
+      const cornerKey = layout.corners[currentCorner] ? currentCorner : 'tl';
+      const cfg = layout.corners[cornerKey];
+      apply('position', cfg.position);
+      apply('scale', cfg.scale);
+    }
+  };
+
   const setState = (state) => {
     if (!guideEl) return;
     if (state === 'hidden') {
       guideEl.setAttribute('visible', 'false');
+      currentState = 'hidden';
+      currentCorner = 'tl';
       return;
     }
     guideEl.setAttribute('visible', 'true');
-    if (state === 'talk') {
-      animateAttr(guideEl, 'scale', '0.6 0.6 0.6');
-      animateAttr(guideEl, 'position', '0 -0.05 -1.8');
-    } else if (state === 'mini') {
-      animateAttr(guideEl, 'scale', '0.3 0.3 0.3');
-    }
+    const normalized = state === 'mini' ? 'mini' : 'talk';
+    currentState = normalized;
+    currentCorner = 'tl';
+    applyLayout();
   };
 
   const dockToCorner = (corner = 'tl') => {
     if (!guideEl) return;
-    let pos = '-0.75 0.39 -1.8';
-    if (corner === 'tr') pos = '0.85 0.32 -1.8';
-    if (corner === 'bl') pos = '-0.85 -0.25 -1.8';
-    if (corner === 'br') pos = '0.85 -0.25 -1.8';
-    animateAttr(guideEl, 'position', pos, 360);
-    animateAttr(guideEl, 'scale', '0.3 0.3 0.3', 360);
+    guideEl.setAttribute('visible', 'true');
+    const key = (corner || 'tl').toString().toLowerCase();
+    if (key === 'tr' || key === 'bl' || key === 'br') {
+      currentCorner = key;
+    } else {
+      currentCorner = 'tl';
+    }
+    currentState = 'corner';
+    applyLayout({ duration: 360 });
   };
 
   const showSubtitles = (text) => {
@@ -79,13 +169,21 @@ export function createGuideController({ guideEl, subtitlesEl, disabled = false }
     subtitlesEl.classList.remove('subtitles--cta');
   };
 
-  // --- Human voice over mp3 (replaces TTS when available) ---
+  const refreshLayout = (opts = {}) => {
+    if (!guideEl) return;
+    applyLayout({
+      immediate: opts.immediate === true,
+      duration: typeof opts.duration === 'number' ? opts.duration : (opts.immediate ? 0 : 240),
+    });
+  };
+
+  // Human voiceover via mp3 (preferred). TTS removed per request.
   const AUDIO_BASE = './assets/music/';
   const audioCache = Object.create(null);
   let currentAudio = null;
 
   const norm = (s='') => s.toLowerCase()
-    .replace(/[.!?,;:\-"'«»()]/g, ' ')
+    .replace(/[.!?,;:\-\"'«»()]/g, ' ')
     .replace(/ё/g, 'е')
     .replace(/\s+/g, ' ')
     .trim();
@@ -149,54 +247,24 @@ export function createGuideController({ guideEl, subtitlesEl, disabled = false }
         resolve();
       };
 
-      // Prefer human voiceover mp3 if mapping exists; fallback to TTS
+      // Prefer human voiceover mp3 if mapping exists; no TTS fallback
       const key = phraseToKey(text || '');
       const audio = ensureAudio(key);
       if (audio) {
         stopCurrentAudio();
         currentAudio = audio;
-        const onEnd = () => { audio.removeEventListener('ended', onEnd); complete(); };
+        const onEnd = () => { try { audio.removeEventListener('ended', onEnd); } catch(_) {}; complete(); };
         audio.addEventListener('ended', onEnd, { once: true });
-        audio.play().catch(() => {
-          // Playback denied (autoplay), fallback to TTS or timeout
+        audio.play().catch((error) => {
+          console.warn('[Guide] voice playback blocked', { key, error });
           try { audio.removeEventListener('ended', onEnd); } catch(_) {}
-          try {
-            if ('speechSynthesis' in window && text) {
-              const u = new SpeechSynthesisUtterance(text);
-              u.lang = 'ru-RU'; u.rate = 0.95; u.pitch = 1.0;
-              u.onerror = () => complete();
-              u.onend = () => complete();
-              try { window.speechSynthesis.speak(u); } catch(_) { complete(); }
-            } else {
-              // Fallback: resolve after an estimated duration
-              setTimeout(complete, estimateSpeechMs(text||''));
-            }
-          } catch(_) { complete(); }
+          setTimeout(complete, estimateSpeechMs(text||''));
         });
         return;
       }
 
-      // No audio mapping found — original TTS or resolve quickly
-      try {
-        if ('speechSynthesis' in window && text) {
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.lang = 'ru-RU';
-          utterance.rate = 0.95;
-          utterance.pitch = 1.0;
-          utterance.onerror = () => complete();
-          utterance.onend = () => complete();
-          const attemptSpeak = () => { try { window.speechSynthesis.speak(utterance); } catch (_) { complete(); } };
-          const voices = window.speechSynthesis.getVoices();
-          if (!voices || voices.length === 0) {
-            window.speechSynthesis.onvoiceschanged = () => { attemptSpeak(); };
-            attemptSpeak();
-          } else {
-            attemptSpeak();
-          }
-        } else {
-          setTimeout(complete, estimateSpeechMs(text||''));
-        }
-      } catch(_) { complete(); }
+      // No mapping — resolve after estimated duration
+      setTimeout(complete, estimateSpeechMs(text || ''));
     }).then(() => {
       if (!opts || opts.dock !== false) dockToCorner('tl');
       if (opts && opts.cta) setCTA(opts.cta);
@@ -211,5 +279,6 @@ export function createGuideController({ guideEl, subtitlesEl, disabled = false }
     setCTA,
     clearCTA,
     speak,
+    refreshLayout,
   };
 }
